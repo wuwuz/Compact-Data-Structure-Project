@@ -6,7 +6,7 @@
 #define deln(a) cerr << #a << " = " << a << endl
 typedef long long LL;
 using namespace std;
-const int N = 200010;
+const int N = 2000100;
 const int K = 200; // threshold for block split
 
 int exam[N];
@@ -115,7 +115,7 @@ struct Filter
 
     int position_hash(int ele)
     {
-        return ele % (n - 1) + 1;
+        return ele % n;
     }
 
     int Hash_32(int h)
@@ -269,7 +269,7 @@ int main()
 
     srand(12345);
 
-    int max_item = 100000;
+    int max_item = 1000000;
 
     int n = 1;
     //printf("%d %d\n", bobhash(&n, 32), bobhash(&n, 32));
@@ -313,6 +313,7 @@ int main()
     printf("insert fail rate = %.2f\n", fail_insert * 100.0 / max_item);
     printf("false negative = %.2f\n", false_negative * 100.0 / max_item);
     printf("false positive = %.2f\n", false_positive * 100.0 / max_item);
+    printf("load factor = %.2f\n", a.filled_cell * 100.0 / m / n);
 
     return 0;
 }

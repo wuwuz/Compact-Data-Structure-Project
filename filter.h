@@ -43,7 +43,7 @@ class Filter
 
 int Filter::position_hash(int ele)
 {
-    return ele % n;
+    return (ele % n + n) % n;
 }
 
 int Filter::initialization(int _n, int _m, int _max_kick_steps)
@@ -175,6 +175,7 @@ class CuckooFilter : public Filter
     private : 
     int alternate(int pos, uint8_t fp) // get alternate position
     {
+        int t = pos ^ position_hash(HashUtil::MurmurHash32(fp));
         return pos ^ position_hash(HashUtil::MurmurHash32(fp));
     }
 }; 

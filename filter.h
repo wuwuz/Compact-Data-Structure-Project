@@ -18,7 +18,7 @@ class Filter
 {
     public : 
 
-    int initialization(int _n, int _m, int _max_kick_steps);
+    void initialization(int _n, int _m, int _max_kick_steps);
     int insert(int ele);
     bool lookup(int ele);
     double get_load_factor();
@@ -34,9 +34,9 @@ class Filter
     int position_hash(int ele); // hash to range [0, n - 1]
     uint8_t fingerprint(int ele); // 32-bit to 8-bit fingerprint
     uint8_t get_item(int pos, int rk); // get cell value (one fingerprint) from tabel[pos][rk]
-    int set_item(int pos, int rk, uint8_t fp); // set tabel[pos][rk] as fp
+    void set_item(int pos, int rk, uint8_t fp); // set tabel[pos][rk] as fp
 
-    virtual int alternate(int pos, uint8_t fp){}; // get alternate position
+    virtual int alternate(int pos, uint8_t fp){ return 0; }; // get alternate position
     int insert_to_bucket(int pos, uint8_t fp); // insert one fingerprint to bucket [pos] 
     bool lookup_in_bucket(int pos, uint8_t fp); // lookup one fingerprint in  bucket [pos]
 } ; 
@@ -46,7 +46,7 @@ int Filter::position_hash(int ele)
     return (ele % n + n) % n;
 }
 
-int Filter::initialization(int _n, int _m, int _max_kick_steps)
+void Filter::initialization(int _n, int _m, int _max_kick_steps)
 {
     n = _n;
     m = _m;
@@ -67,7 +67,7 @@ uint8_t Filter::get_item(int pos, int rk)
     return (uint8_t) T[pos * m + rk];
 }
 
-int Filter::set_item(int pos, int rk, uint8_t fp)
+void Filter::set_item(int pos, int rk, uint8_t fp)
 {
     T[pos * m + rk] = (uint8_t) fp;
 }
@@ -85,7 +85,7 @@ int Filter::insert_to_bucket(int pos, uint8_t fp)
             return 0;
         } else 
         {
-            uint8_t t = get_item(pos, i);
+            //uint8_t t = get_item(pos, i);
         }
 
     return 1;
@@ -111,8 +111,7 @@ int Filter::insert(int ele)
     if (insert_to_bucket(cur2, fp) == 0) {filled_cell++; return 0;}
 
     //randomly choose one bucket's elements to kick
-    int cur = cur1;
-    if (rand() % 2 == 0) cur = cur2;
+	int cur = (rand() & 1) ? cur1 : cur2;
     int rk = rand() % m;
 
     //get those item
@@ -142,7 +141,6 @@ bool Filter::lookup_in_bucket(int pos, uint8_t fp)
 
     for (int i = 0; i < m; i++)
     {
-        uint8_t t = get_item(pos, i);
         if (get_item(pos, i) == (uint8_t) fp) 
             return true;
     }
@@ -175,7 +173,6 @@ class CuckooFilter : public Filter
     private : 
     int alternate(int pos, uint8_t fp) // get alternate position
     {
-        int t = pos ^ position_hash(HashUtil::MurmurHash32(fp));
         return pos ^ position_hash(HashUtil::MurmurHash32(fp));
     }
 }; 
@@ -183,11 +180,6 @@ class CuckooFilter : public Filter
 class MyFilter : public Filter
 {
     private : 
-
-    int flag(int x, int delta)
-    {
-        return (x / delta) & 1; // return x / delta is odd or even
-    }
 
     int alternate(int pos, uint8_t fp)
     {
@@ -204,7 +196,7 @@ class MyFilter : public Filter
 
         for (; ;)
         {
-            if (flag(pos, delta) == 0) 
+            if (((pos / delta) & 1) == 0) 
             {
                 if (pos + delta < nn)
                 {
@@ -216,6 +208,8 @@ class MyFilter : public Filter
                     int ub = min((pos / delta) * delta + delta - 1, nn - 1); // [lb, ub] is the interval which can't determine pair
                     sum_bound += lb;
                     nn = ub - lb + 1;
+					//delta >>= 1;
+					//if (delta == 0) delta = 1;
                     delta = HashUtil::MurmurHash32(delta) % nn;
                     delta = (delta == 0) ? 1 : delta;
                     pos = pos - lb;

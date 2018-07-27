@@ -92,12 +92,12 @@ int main(int argc, char **argv)
 			lupKey.push_back(rd());
 	}
 
-	CuckooFilter<uint16_t, 16> xor_filter;
+	CuckooFilter<uint16_t, 12> xor_filter;
 	m = 1 << (int)(ceil(log2(n / b / 0.95)));
 	xor_filter.init(m, b, maxSteps);
 	evaluate(xor_filter, "XOR-CuckooFilter", insKey, lupKey);
 
-	MyFilter<uint16_t, 16> add_filter;
+	MyFilter<uint16_t, 12> add_filter;
 	m = (int) (n / b / 0.95);
 	m += m & 1;
 	add_filter.init(m, b, maxSteps);

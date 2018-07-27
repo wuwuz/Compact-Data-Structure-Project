@@ -18,6 +18,8 @@ class Filter
 {
     public : 
 
+    int n; // number of buckets
+    int m; // number of slots per bucket
     void initialization(int _n, int _m, int _max_kick_steps);
     int insert(int ele);
     bool lookup(int ele);
@@ -25,8 +27,6 @@ class Filter
 
     protected : 
 
-    int n; // number of buckets
-    int m; // number of slots per bucket
     int filled_cell;
     unsigned char *T; // table
     int max_kick_steps;

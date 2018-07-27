@@ -27,8 +27,9 @@ void evaluate(Filter<fp_t, fp_len> &filter,
 		if (filter.lookup(key) == false) // false negative
 			++false_negative;
 
+	unordered_set<int> S(insKey.begin(), insKey.end());
 	for (int key : lupKey)
-		if (filter.lookup(key) == true) // false positive
+		if (filter.lookup(key) == true && !S.count(key)) // false positive
 			++false_positive;
 
 	int n = insKey.size(), q = lupKey.size(), m = filter.n, b = filter.m;
@@ -65,6 +66,7 @@ int main(int argc, char **argv)
 			break;
 		case 'q':
 			cmd_q = atoi(optarg);
+			break;
 		default:
 			break;
 		}	
@@ -92,12 +94,12 @@ int main(int argc, char **argv)
 			lupKey.push_back(rd());
 	}
 
-	CuckooFilter<uint16_t, 12> xor_filter;
+	CuckooFilter<uint8_t, 8> xor_filter;
 	m = 1 << (int)(ceil(log2(n / b / 0.95)));
 	xor_filter.init(m, b, maxSteps);
 	evaluate(xor_filter, "XOR-CuckooFilter", insKey, lupKey);
 
-	MyFilter<uint16_t, 12> add_filter;
+	MyFilter<uint8_t, 8> add_filter;
 	m = (int) (n / b / 0.95);
 	m += m & 1;
 	add_filter.init(m, b, maxSteps);

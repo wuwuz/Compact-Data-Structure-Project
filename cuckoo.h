@@ -26,6 +26,8 @@ class Filter
     bool lookup(int ele);
     double get_load_factor();
 
+	~Filter() { free(T); }
+
     protected : 
 
     int filled_cell;

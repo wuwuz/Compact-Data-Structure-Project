@@ -15,14 +15,19 @@ template <typename fp_t, int fp_len>
 void evaluate(Filter<fp_t, fp_len> &filter,
 			  const char *filter_name)
 {
-	for (; ;) {
-		int key = rd();
-		if (filter.insert(key) == 1)
-			break;
+	double aver_load_factor = 0;
+	int runTimes = 25;
+	for (int run = 0; run < runTimes; ++run) {
+		for (; ;) {
+			int key = rd();
+			if (filter.insert(key) == 1)
+				break;
+		}
+		aver_load_factor += filter.get_load_factor();
 	}
 	printf("Testing %s: m = %d, b = %d\n",
 		   filter_name, filter.n, filter.m);
-	printf("\tload factor = %.3f\n", filter.get_load_factor());
+	printf("    load factor = %.3f\n", aver_load_factor / runTimes);
 }
 
 const int maxSteps = 200; // threshold for kick steps
@@ -31,8 +36,8 @@ int main(int argc, char **argv)
 {
 	// Parse the command line
 	char c;
-	int seed  = 0;
-	int cmd_m = 100000;
+	int seed  = 97;
+	int cmd_m = 262144;
 	while ((c = getopt(argc, argv, "r:m:")) != EOF) {
 		switch (c) {
 		case 'r':
@@ -47,7 +52,7 @@ int main(int argc, char **argv)
 	}
 	rd.seed(seed);
 
-	int m = cmd_m, b = 4; // #item, #lookup, #bucket, #entry per bucket
+	int m = cmd_m, b = 4; // #bucket, #entry per bucket
 
 	if ((m & -m) == m) {
 		CuckooFilter<uint8_t, 8> xor_filter;

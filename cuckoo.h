@@ -22,6 +22,7 @@ class Filter
     int n; // number of buckets
     int m; // number of slots per bucket
     void init(int _n, int _m, int _max_kick_steps);
+	void clear();
     int insert(int ele);
     bool lookup(int ele);
     double get_load_factor();
@@ -35,7 +36,7 @@ class Filter
     int max_kick_steps;
 
     int position_hash(int ele); // hash to range [0, n - 1]
-    fp_t fingerprint(int ele); // 32-bit to 4/8/16-bit fingerprint
+    fp_t fingerprint(int ele); // 32-bit to 'fp_len'-bit fingerprint
     fp_t get_item(int pos, int rk); // get cell value (one fingerprint) from tabel[pos][rk]
     void set_item(int pos, int rk, fp_t fp); // set tabel[pos][rk] as fp
 
@@ -59,7 +60,14 @@ void Filter<fp_t, fp_len>::init(int _n, int _m, int _step)
     filled_cell = 0;
 
     T = (fp_t*) calloc(n * m, sizeof(fp_t));
-} 
+}
+
+template <typename fp_t, int fp_len>
+void Filter<fp_t, fp_len>::clear()
+{
+	filled_cell = 0;
+	memset(T, 0, sizeof(fp_t) * (n * m));
+}
 
 template <typename fp_t, int fp_len>
 fp_t Filter<fp_t, fp_len>::fingerprint(int ele)
@@ -197,9 +205,8 @@ class MyFilter : public Filter<fp_t, fp_len>
         // My cuckoo filter -- plus or minus
 		int n = this->n;
         int bias = (n / (1 << fp_len)) * fp;  // bias -- avoid aggregate
-        pos = (pos + bias) % n;
-        int delta = HashUtil::MurmurHash32(fp) % (n / 2);
-        delta = (delta == 0) ? 1 : delta;
+		pos = (pos + bias) % n;
+        int delta = HashUtil::MurmurHash32(fp) % (n-1) + 1;
 
         int sum_bound = 0;
         int ret = 0;
@@ -220,10 +227,7 @@ class MyFilter : public Filter<fp_t, fp_len>
                     int ub = min((pos / delta) * delta + delta - 1, nn - 1); // [lb, ub] is the interval which can't determine pair
                     sum_bound += lb;
                     nn = ub - lb + 1;
-					//delta >>= 1;
-					//if (delta == 0) delta = 1;
-                    delta = HashUtil::MurmurHash32(delta) % nn;
-                    delta = (delta == 0) ? 1 : delta;
+                    delta = HashUtil::MurmurHash32(delta) % (nn-1) + 1;
                     pos = pos - lb;
                 }
             }

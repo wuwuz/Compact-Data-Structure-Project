@@ -63,9 +63,11 @@ int main(int argc, char **argv)
 			break;
 		case 'n':
 			cmd_n = atoi(optarg);
+            printf("cmd_n == %d\n", cmd_n);
 			break;
 		case 'q':
 			cmd_q = atoi(optarg);
+            printf("cmd_q == %d\n", cmd_q);
 			break;
 		default:
 			break;
@@ -94,16 +96,25 @@ int main(int argc, char **argv)
 			lupKey.push_back(rd());
 	}
 
-	CuckooFilter<uint8_t, 8> xor_filter;
+	CuckooFilter<uint8_t, 8> standard_cuckoo_filter;
 	m = 1 << (int)(ceil(log2(n / b / 0.95)));
-	xor_filter.init(m, b, maxSteps);
-	evaluate(xor_filter, "XOR-CuckooFilter", insKey, lupKey);
+	standard_cuckoo_filter.init(m, b, maxSteps);
+	evaluate(standard_cuckoo_filter, "standard-CuckooFilter", insKey, lupKey);
 
 	MyFilter<uint8_t, 8> add_filter;
-	m = (int) (n / b / 0.95);
+	//m = 1 << (int)(ceil(log2(n / b / 0.95)));
+	m = (int) (n / b / 0.95 + 1);
 	m += m & 1;
 	add_filter.init(m, b, maxSteps);
 	evaluate(add_filter, "ADD-CuckooFilter", insKey, lupKey);
+    
+
+	XorFilter<uint8_t, 8> xor_filter;
+	//m = 1 << (int)(ceil(log2(n / b / 0.95)));
+	m = (int) (n / b / 0.95 + 1);
+	m += m & 1;
+	xor_filter.init(m, b, maxSteps);
+	evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
 
 	return 0;	
 }

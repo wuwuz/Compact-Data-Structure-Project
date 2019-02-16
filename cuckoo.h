@@ -14,6 +14,27 @@ using namespace std;
 #define debug(a) cerr << #a << " = " << a << ' '
 #define deln(a) cerr << #a << " = " << a << endl
 
+
+inline int find_the_highest_bit(int v)
+{
+// tricks of bit 
+// from http://graphics.stanford.edu/~seander/bithacks.html
+    static const int MultiplyDeBruijnBitPosition[32] = 
+    {
+      0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,
+      8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31
+    };
+
+    v |= v >> 1; // first round down to one less than a power of 2 
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+
+    int r = MultiplyDeBruijnBitPosition[(uint32_t)(v * 0x07C4ACDDU) >> 27];
+    return r;
+}
+
 template <typename fp_t, int fp_len>
 class Filter
 {
@@ -118,7 +139,9 @@ int Filter<fp_t, fp_len>::insert(int ele)
     if (alternate(cur2, fp) != cur1)
     {
         deln(ele);
-        deln((fp_t)fp);
+        deln(fp);
+        printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
+        printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
     }
 
     if (insert_to_bucket(cur1, fp) == 0) {filled_cell++; return 0;}
@@ -191,7 +214,56 @@ class CuckooFilter : public Filter<fp_t, fp_len>
     private : 
     int alternate(int pos, fp_t fp) // get alternate position
     {
-        return pos ^ this->position_hash(HashUtil::MurmurHash32(fp));
+        int ret =  pos ^ this->position_hash(HashUtil::MurmurHash32(fp));
+        //if (ret == pos)
+        //    puts("cuckoo xor 0");
+        return ret;
+    }
+}; 
+
+template <typename fp_t, int fp_len>
+class XorFilter : public Filter<fp_t, fp_len>
+{
+    private : 
+    int alternate(int pos, fp_t fp) // get alternate position
+    {
+        int n = this -> n;
+
+        int fp_hash = HashUtil::MurmurHash32(fp);
+
+        //delta : the xor number
+        int delta = this->position_hash(fp_hash);
+
+        //bias : the rotation bias
+        int bias = delta;
+
+        // add bias to avoid aggregation
+        pos = pos + bias;
+        if (pos >= n) pos -= n;
+
+        // find the corresponding segment of 'pos'
+        // 1. pos ^ n 
+        // ----- the highest different bit between position and n will be set to 1
+        //
+        // 2. find the highest bit 
+        // ----- get the segment number
+        //
+        // 3. curlen = 1 << highest_bit
+        // ----- get the segment length
+        int segment_length = 1 << find_the_highest_bit(pos ^ n);
+
+        // get the alternate position
+        // 1. delta & (segment_length - 1)
+        // ----- equals to delta % segment_length
+        // 2. pos ^ ...
+        // ----- xor (delta % segment_length)
+        int alternate_position = pos ^ (delta & (segment_length - 1));
+
+        // minus bias to avoid aggregation
+        alternate_position = alternate_position - bias;
+        if (alternate_position < 0) alternate_position += n;
+
+        return alternate_position;
     }
 }; 
 

@@ -64,6 +64,7 @@ int main(int argc, char **argv)
 
 	int q = cmd_q, m = 262144, b = 4; // #lookup, #bucket, #entry per bucket
 
+    /*
 	CuckooFilter<uint16_t, 16> xor_filter;
 	xor_filter.init(m, b, maxSteps);
 	evaluate(xor_filter, "XOR-CuckooFilter", q);
@@ -71,6 +72,7 @@ int main(int argc, char **argv)
 	MyFilter<uint16_t, 16> add_filter;
 	add_filter.init(m, b, maxSteps);
 	evaluate(add_filter, "ADD-CuckooFilter", q);
+    */
 
 	return 0;	
 }

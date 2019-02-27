@@ -10,22 +10,31 @@
 using namespace std;
 
 template <typename fp_t, int fp_len>
-void evaluate(Filter<fp_t, fp_len> &filter,
+double evaluate(Filter<fp_t, fp_len> &filter,
 			  const char *filter_name,
 			  const vector<int> &insKey,
 			  const vector<int> &lupKey)
 {
+    // return load factor
+    //
 	int fail_insert = 0;
 	int false_positive = 0;
 	int false_negative = 0;
 	
 	for (int key : insKey)
 		if (filter.insert(key) == 1) // insertion failed
+        {
+            printf("insert false : %x\n", key);
 			++fail_insert;
+            //break;
+        }
 
 	for (int key : insKey)
 		if (filter.lookup(key) == false) // false negative
+        {
+            //printf("lookup false : %x\n", key);
 			++false_negative;
+        }
 
 	unordered_set<int> S(insKey.begin(), insKey.end());
 	for (int key : lupKey)
@@ -33,15 +42,17 @@ void evaluate(Filter<fp_t, fp_len> &filter,
 			++false_positive;
 
 	int n = insKey.size(), q = lupKey.size(), m = filter.n, b = filter.m;
-	printf("testing %s: n = %d, q = %d, m = %d, b = %d\n",
-		   filter_name, n, q, m, b);
+	printf("testing %s: n = %d, q = %d, m = %d, b = %d memory = %d bytes\n",
+		   filter_name, n, q, m, b, filter.memory_consumption);
     printf("fail insertion rate = %.3f%%\n", fail_insert * 100.0 / n);
 	printf("false negative rate = %.3f%%\n", false_negative * 100.0 / n);
 	printf("false positive rate = %.3f%%\n", false_positive * 100.0 / q);
 	printf("load factor = %.3f\n", filter.get_load_factor());
+
+    return filter.get_load_factor();
 }
 
-const int maxSteps = 200; // threshold for kick steps
+const int maxSteps = 500; // threshold for kick steps
 vector<int> insKey, lupKey;
 
 int main(int argc, char **argv)
@@ -95,8 +106,13 @@ int main(int argc, char **argv)
 		for (int i = 1; i <= q; ++i)
 			lupKey.push_back(rd());
 	}
+    
+    printf("testing with parameters : \n");
+    printf("insert keys : %d\n", n);
+    printf("lookup times: %d\n\n\n", q);
 
-	CuckooFilter<uint8_t, 8> standard_cuckoo_filter;
+    /*
+	StandardCuckooFilter<uint8_t, 8> standard_cuckoo_filter;
 	m = 1 << (int)(ceil(log2(n / b / 0.95)));
 	standard_cuckoo_filter.init(m, b, maxSteps);
 	evaluate(standard_cuckoo_filter, "standard-CuckooFilter", insKey, lupKey);
@@ -106,15 +122,93 @@ int main(int argc, char **argv)
 	m = (int) (n / b / 0.95 + 1);
 	m += m & 1;
 	add_filter.init(m, b, maxSteps);
-	evaluate(add_filter, "ADD-CuckooFilter", insKey, lupKey);
+	evaluate(add_filter, "OLD-CuckooFilter", insKey, lupKey);
     
+    */
 
-	XorFilter<uint8_t, 8> xor_filter;
-	//m = 1 << (int)(ceil(log2(n / b / 0.95)));
+    /*
+
+    printf("maxSteps %d\n", maxSteps);
+    double sum1 = 0;
+    double sum2 = 0;
+    int times = 50;
+
+	mt19937 rd(seed);
+
+    for (int i = 1; i <= times; i++)
+    {
+        printf("round : %d\n", i);
+        insKey.clear();
+        lupKey.clear();
+
+		n = cmd_n;  q = cmd_q;
+		for (int i = 1; i <= n; ++i)
+			insKey.push_back(rd());
+		for (int i = 1; i <= q; ++i)
+			lupKey.push_back(rd());
+
+        XorFilter<uint8_t, 8> xor_filter;
+        //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+        m = n / b;
+        //m = (int) (n / b / 0.95 + 1);
+        m += m & 1;
+        xor_filter.init(m, b, maxSteps);
+        double sb = evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
+        printf("%.5f\n", sb);
+        sum1 += sb;
+
+        AddFilter<uint8_t, 8> new_filter;
+        //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+        //m = (int) (n / b / 0.96 + 1);
+        m = n / b;
+        m += m & 1;
+        new_filter.init(m, b, maxSteps);
+        sum2 += evaluate(new_filter, "Morton-CuckooFilter", insKey, lupKey);
+    }
+
+    printf("%.5f %.5f\n", sum1 / times, sum2 / times);
+
+    */
+
+    //b = 16;
+
+    /*
+    XorFilter<uint16_t, 16> xor_filter;
+    xor_filter.init(1000, b, maxSteps);
+    xor_filter.test_bucket();
+
+    XorFilter<uint8_t, 8> xor_filter_1;
+    xor_filter_1.init(1000, b, maxSteps);
+    xor_filter_1.test_bucket();
+    */
+
+    // uint16 : buggy...
+
+    /*
+    AddFilter<uint8_t, 8> new_filter;
+    //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+    m = (int) (n / b / 0.95 + 1);
+    //m = n / b;
+    m += m & 1;
+    new_filter.init(m, b, maxSteps);
+    evaluate(new_filter, "Morton-CuckooFilter", insKey, lupKey);
+    */
+
+    XorFilter<uint8_t, 8> xor_filter;
+    //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+    //m = n / b;
+    m = (int) (n / b / 0.90 + 1);
+    m += m & 1;
+    xor_filter.init(m, b, maxSteps);
+    evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
+    //printf("%.5f\n", sb);
+    //sum1 += sb;
+
+    BloomFilter<uint8_t, 8> bloom_filter;
 	m = (int) (n / b / 0.95 + 1);
 	m += m & 1;
-	xor_filter.init(m, b, maxSteps);
-	evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
+	bloom_filter.init(m, b, maxSteps);
+	evaluate(bloom_filter, "bloom-CuckooFilter", insKey, lupKey);
 
 	return 0;	
 }

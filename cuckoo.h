@@ -150,19 +150,19 @@ void CuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
     this -> m = _m;
     this -> max_kick_steps = _step;
     this -> filled_cell = 0;
-    this -> memory_consumption = _n * _m * sizeof(fp_t);
+    this -> memory_consumption = int(_n * _m * (fp_len) * 1.0 / 8);
 
     max_2_power = 1;
     for (; max_2_power * 2 < _n; ) max_2_power <<= 1;
 
-    this -> T = (fp_t*) calloc(this -> n * this -> m, sizeof(fp_t));
+    this -> T = (fp_t*) calloc(this -> memory_consumption, sizeof(char));
 }
 
 template <typename fp_t, int fp_len>
 void CuckooFilter<fp_t, fp_len>::clear()
 {
 	this -> filled_cell = 0;
-	memset(this -> T, 0, sizeof(fp_t) * (this -> n * this -> m));
+	memset(this -> T, 0, this -> memory_consumption);
 }
 
 template <typename fp_t, int fp_len>
@@ -660,6 +660,433 @@ void SemiSortCuckooFilter<fp_t, fp_len>::test_bucket()
 }
 
 template <typename fp_t, int fp_len>
+class MortonFilter : public Filter<fp_t, fp_len>
+{
+    public : 
+
+    int max_2_power;
+    virtual void init(int _n, int _m, int _max_kick_steps);
+	void clear();
+    int insert(int ele);
+    bool lookup(int ele);
+    double get_load_factor();
+
+    uint8_t *T;
+
+	~MortonFilter() { free(T); }
+    
+    int filled_cell;
+    int max_kick_steps;
+    int block_number;
+
+    fp_t fingerprint(int ele); // 32-bit to 'fp_len'-bit fingerprint
+
+    //interface for semi-sorted bucket
+    void get_bucket(int pos, fp_t *store);
+    void set_bucket(int pos, fp_t *sotre);
+    void test_bucket();
+    void print_block(int pos);
+    int get_count(int block, int index);
+    void set_count(int block, int index, int count);
+    void block_kick_one(int pos, int &alt, fp_t &p);
+
+    virtual int alternate(int pos, fp_t fp) = 0; // get alternate position
+    virtual int insert_to_bucket(fp_t *store, fp_t fp); // insert one fingerprint to bucket [pos] 
+    virtual int lookup_in_bucket(int pos, fp_t fp); // lookup one fingerprint in  bucket [pos]
+} ; 
+
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
+{
+    this -> n = _n;
+    this -> m = _m;
+    this -> max_kick_steps = _step;
+    this -> filled_cell = 0;
+
+    this -> block_number = ROUNDUP(int(_n / 0.95), 46) / 46;
+    int how_many_bit = this -> block_number * 512;
+
+    // here, we use memory_consumption as standard
+
+
+    this -> memory_consumption = ROUNDUP(how_many_bit, 512) / 8; // how many bytes !
+    this -> T = (uint8_t *) calloc(this -> memory_consumption, sizeof(char));
+
+    this -> n = 64 * this -> block_number; // logical position number
+    this -> m = 3; // m items perm bucket
+
+    max_2_power = 1;
+
+    for (; max_2_power * 2 < _n; ) max_2_power <<= 1;
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::clear()
+{
+	this -> filled_cell = 0;
+	//memset(this -> T, 0, sizeof(fp_t) * (this -> n * this -> m));
+    memset(this -> T, 0, this -> memory_consumption);
+}
+
+template <typename fp_t, int fp_len>
+fp_t MortonFilter<fp_t, fp_len>::fingerprint(int ele)
+{
+    fp_t h = HashUtil::BobHash32(&ele, 4) % ((1ull << fp_len) -1) + 1;
+    return h;
+}
+
+template <typename fp_t, int fp_len>
+int MortonFilter<fp_t, fp_len>::get_count(int block_number, int index)
+{
+    return (T[block_number * 512 / 8 + 368 / 8 + (index * 2) / 8] >> (index * 2 % 8)) & 3;
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::set_count(int block_number, int index, int count)
+{
+    T[block_number * 512 / 8 + 368 / 8 + (index * 2) / 8] = ((uint8_t) T[block_number * 512 / 8 + 368 / 8 + (index * 2) / 8] & (uint8_t)(~(3 << (index * 2 % 8)))) + (count << (index * 2 % 8));
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::print_block(int pos)
+{
+    int base_byte = pos / 64 * (512 / 8);
+    int block_number = pos / 64;
+
+    printf("block number = %d\n", block_number);
+    printf("FCA : ");
+    for (int i = 0; i < 64; i++)
+        printf("%d ", get_count(block_number, i));
+    puts("");
+
+    printf("FSA : ");
+    for (int i = 0; i < 46; i++)
+        printf("%x ", T[base_byte + i]);
+    puts("");
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
+{
+    // T : uint8_t *
+    int block = pos / 64;
+    int index = pos % 64;
+    int base_byte = block * 512 / 8;
+    int offset_index = 0;
+
+    for (int i = 0; i < index; i++) offset_index += get_count(block, i);
+
+    /*
+    if (pos == 1099) 
+        print_block(pos);
+    */
+
+    int cur_bucket_count = get_count(block, index);
+
+    for (int i = 0; i < 4; i++) store[i] = 0;
+    for (int i = 0; i < cur_bucket_count; i++)
+        store[i] = T[base_byte + offset_index + i];
+
+    for (int i = index; i < 64; i++) offset_index += get_count(block, i);
+
+    store[3] = offset_index; // store block load
+}
+
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::set_bucket(int pos, fp_t *store)
+{
+    int block = pos / 64;
+    int index = pos % 64;
+    int base_byte = block * 512 / 8;
+    int offset_index = 0;
+
+    for (int i = 0; i < index; i++) offset_index += get_count(block, i);
+
+    int cur_bucket_count = get_count(block, index);
+    int new_bucket_count = 0;
+
+    for (int i = 0; i < 3; i++)
+        if (store[i] != 0)
+            new_bucket_count++;
+
+    if (new_bucket_count < cur_bucket_count) // delete elements, move forward
+    { 
+        printf("delete pos = %d, index = %d, old = %d, new = %d\n", pos, index, cur_bucket_count, new_bucket_count);
+        //print_block(pos);
+        for (int i = offset_index + new_bucket_count; i + (cur_bucket_count - new_bucket_count) < 368 / 8; i++)
+        {
+            if (i + cur_bucket_count - new_bucket_count >= 368 / 8)
+                T[base_byte + i] = 0;
+            else
+                T[base_byte + i] = T[base_byte + i + cur_bucket_count - new_bucket_count];
+        }
+    } else 
+    if (new_bucket_count > cur_bucket_count) // add elements, move backward
+    {
+        //printf("add element to pos = %d, index = %d, old = %d, new = %d\n", pos, index, cur_bucket_count, new_bucket_count);
+        for (int i = 368 / 8 - 1; i >= offset_index + new_bucket_count; i--)
+            T[base_byte + i] = T[base_byte + i - new_bucket_count + cur_bucket_count];
+    }
+
+    set_count(block, index, new_bucket_count);
+   // printf("%d 0x%x\n", base_byte + 368 / 8 + (index * 2) / 8, T[base_byte + 368 / 8 + (index * 2) / 8]);
+
+    //printf("store : ");
+
+    for (int i = 0; i < new_bucket_count; i++)
+    {
+        //printf("0x%x ", store[i]);
+        T[base_byte + offset_index + i] = store[i];
+    }
+    //puts("");
+
+    //print_block(base_byte);
+}
+
+/*
+template <typename fp_t, int fp_len>
+fp_t CuckooFilter<fp_t, fp_len>::get_item(int pos, int rk)
+{
+    return (fp_t) this -> T[pos * this -> m + rk];
+}
+
+template <typename fp_t, int fp_len>
+void CuckooFilter<fp_t, fp_len>::set_item(int pos, int rk, fp_t fp)
+{
+    this -> T[pos * this -> m + rk] = (fp_t) fp;
+}
+*/
+template <typename fp_t, int fp_len>
+int MortonFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
+{
+
+    // if success return 0
+    // if fail return 1
+
+    //get_bucket(pos, store);
+
+    if (store[3] >= 368 / 8) return 1; // block full !
+
+    for (int i = 0; i < this -> m; i++) 
+        if (store[i] == 0)
+        {
+            store[i] = fp;
+            //set_bucket(pos, store);
+            return 0;
+        }
+
+    return 1;
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::block_kick_one(int pos, int &alt, fp_t &fp)
+{
+    //printf("ready to kick one\n");
+    //print_block(pos);
+    int block = pos / 64;
+    int tmp = 0;
+    for (int i = 63; i >= 0; i--)
+    {
+        if (get_count(block, i) > 0)
+        {
+            tmp = i;
+            break;
+        }
+    }
+    int old_count = get_count(block, tmp);
+    set_count(block, tmp, old_count - 1);
+
+    fp = T[block * 512 / 8 + 45];
+    T[block * 512 / 8 + 45] = 0;
+    alt = tmp + block * 64;
+
+    //printf("\nkicked\n");
+    //print_block(pos);
+}
+template <typename fp_t, int fp_len>
+int MortonFilter<fp_t, fp_len>::insert(int ele)
+{
+
+    // If insert success return 0
+    // If insert fail return 1
+
+    fp_t fp = fingerprint(ele);
+
+    int cur1 = this -> position_hash(ele);
+    int cur2 = alternate(cur1, fp);
+    if (alternate(cur2, fp) != cur1)
+    {
+        deln(ele);
+        deln(fp);
+        printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
+        printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
+    }
+
+    fp_t store1[8];
+    fp_t store2[8];
+
+    /*
+    if (ele == 0x6229393a)
+    {
+        print_block(cur1);
+        print_block(cur2);
+        fp = fingerprint(0x6229393a);
+    }
+    */
+    get_bucket(cur1, store1);
+    get_bucket(cur2, store2);
+
+    if (insert_to_bucket(store1, fp) == 0) {filled_cell++; set_bucket(cur1, store1); return 0;}
+    if (insert_to_bucket(store2, fp) == 0) {filled_cell++; set_bucket(cur2, store2); return 0;}
+
+    //get those item
+    int cur;
+    fp_t *cur_store;
+
+    if (rand() & 1)
+        cur = cur1, cur_store = store1;
+    else 
+        cur = cur2, cur_store = store2;
+
+    fp_t tmp_fp = cur_store[0];
+    if (tmp_fp == 0)
+    {
+        // this block is full ! kick another item in this block
+        int kick_pos = 0;
+        fp_t kick_item = 0;
+        block_kick_one(cur, kick_pos, kick_item);
+
+        cur_store[0] = fp;
+        set_bucket(cur, cur_store);
+        //printf("kick and store\n");
+        //print_block(cur);
+
+        cur = kick_pos;
+        tmp_fp = kick_item;
+    } else
+    {
+        cur_store[0] = fp;
+        set_bucket(cur, cur_store);
+    }
+
+    int alt = alternate(cur, tmp_fp);
+    
+    for (int i = 0; i < this -> max_kick_steps; i++)
+    {
+        memset(store1, 0, sizeof(store1));
+        get_bucket(alt, store1);
+        if (insert_to_bucket(store1, tmp_fp) == 0) 
+        {
+            filled_cell++; 
+            set_bucket(alt, store1);
+            return 0;
+        }
+
+        fp = store1[0];
+        if (fp == 0)
+        {
+            // this block is full ! kick another item in this block
+            int kick_pos = 0;
+            fp_t kick_item = 0;
+            block_kick_one(alt, kick_pos, kick_item);
+
+            store1[0] = tmp_fp;
+            set_bucket(alt, store1);
+
+            alt = kick_pos;
+            fp = kick_item;
+        } else
+        {
+            store1[0] = tmp_fp;
+            set_bucket(alt, store1);
+        }
+
+
+        tmp_fp = fp;
+        alt = alternate(alt, tmp_fp);
+    }
+
+    return 1;
+}
+
+template <typename fp_t, int fp_len>
+int MortonFilter<fp_t, fp_len>::lookup_in_bucket(int pos, fp_t fp)
+{
+    // If lookup success return 1
+    // If lookup fail and the bucket is full return 2
+    // If lookup fail and the bucket is not full return 3
+
+    fp_t store[8];
+    get_bucket(pos, store);
+
+    int isFull = 1;
+    for (int i = 0; i < this -> m; i++)
+    {
+        fp_t t = store[i];
+        if (t == fp) 
+            return 1;
+        isFull &= (t != 0);
+    }
+    return (isFull) ? 2 : 3;
+}
+
+template <typename fp_t, int fp_len>
+bool MortonFilter<fp_t, fp_len>::lookup(int ele)
+{
+
+    // If ele is positive, return true
+    // negative -- return false
+
+	fp_t fp = fingerprint(ele);
+    int pos1 = this -> position_hash(ele);
+    int pos2 = alternate(pos1, fp);
+
+    /*
+    if (ele == 0x6229393a)
+    {
+        print_block(pos1);
+        print_block(pos2);
+        printf("fp = %x\n", fp);
+    }
+    */
+  
+    int ok1 = lookup_in_bucket(pos1, fp);
+
+    if (ok1 == 1) return true;
+
+    int ok2 = lookup_in_bucket(pos2, fp);
+
+    return ok2 == 1;
+}
+
+template <typename fp_t, int fp_len>
+double MortonFilter<fp_t, fp_len>::get_load_factor()
+{
+    return filled_cell * 1.0 / (block_number * 368 / 8);
+}
+
+template <typename fp_t, int fp_len>
+void MortonFilter<fp_t, fp_len>::test_bucket()
+{
+    for (int i = 0; i < this -> n; i++)
+    {
+        fp_t store[8];
+        store[0] = rand() % (1 << 16);
+        store[1] = rand() % (1 << 16);
+        store[2] = rand() % (1 << 16);
+
+        set_bucket(i, store);
+
+        fp_t tmp_store[8];
+        get_bucket(i, tmp_store);
+        for (int j = 0; j < 3; j++)
+            assert(tmp_store[j] == store[j]);
+    }
+}
+
+template <typename fp_t, int fp_len>
 class StandardCuckooFilter : public CuckooFilter<fp_t, fp_len>
 {
     private : 
@@ -720,7 +1147,7 @@ class XorFilter : public SemiSortCuckooFilter<fp_t, fp_len>
 }; 
 
 template <typename fp_t, int fp_len>
-class AddFilter : public CuckooFilter<fp_t, fp_len>
+class MortonAddFilter : public MortonFilter<fp_t, fp_len>
 {
     private : 
 

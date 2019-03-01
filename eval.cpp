@@ -22,17 +22,21 @@ double evaluate(Filter<fp_t, fp_len> &filter,
 	int false_negative = 0;
 	
 	for (int key : insKey)
+    {
+        if (key == insKey[515])
+            printf("now");
 		if (filter.insert(key) == 1) // insertion failed
         {
             printf("insert false : %x\n", key);
 			++fail_insert;
             //break;
         }
+    }
 
 	for (int key : insKey)
 		if (filter.lookup(key) == false) // false negative
         {
-            //printf("lookup false : %x\n", key);
+            printf("lookup false : %x\n", key);
 			++false_negative;
         }
 
@@ -184,17 +188,15 @@ int main(int argc, char **argv)
 
     // uint16 : buggy...
 
-    /*
-    AddFilter<uint8_t, 8> new_filter;
+    MortonAddFilter<uint8_t, 8> new_filter;
     //m = 1 << (int)(ceil(log2(n / b / 0.95)));
-    m = (int) (n / b / 0.95 + 1);
+    //m = (int) (n / b / 0.95 + 1);
     //m = n / b;
-    m += m & 1;
-    new_filter.init(m, b, maxSteps);
+    //m += m & 1;
+    new_filter.init(n, b, maxSteps);
     evaluate(new_filter, "Morton-CuckooFilter", insKey, lupKey);
-    */
 
-    XorFilter<uint8_t, 8> xor_filter;
+    XorFilter<uint16_t, 15> xor_filter;
     //m = 1 << (int)(ceil(log2(n / b / 0.95)));
     //m = n / b;
     m = (int) (n / b / 0.90 + 1);

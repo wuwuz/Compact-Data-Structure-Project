@@ -23,22 +23,29 @@ double evaluate(Filter<fp_t, fp_len> &filter,
 	
 	for (int key : insKey)
     {
-        if (key == insKey[515])
-            printf("now");
+        if (filter.lookup(key) == 1) 
+        {
+            //printf("insert repetetion : %x\n", key);
+            continue;
+        }
 		if (filter.insert(key) == 1) // insertion failed
         {
             printf("insert false : %x\n", key);
 			++fail_insert;
-            //break;
+            break;
         }
+        //printf("%.5f\n", filter.get_load_factor());
     }
 
 	for (int key : insKey)
+    {
 		if (filter.lookup(key) == false) // false negative
         {
-            printf("lookup false : %x\n", key);
+            filter.lookup(key);
+            //printf("lookup false : %x\n", key);
 			++false_negative;
         }
+    }
 
 	unordered_set<int> S(insKey.begin(), insKey.end());
 	for (int key : lupKey)
@@ -52,11 +59,13 @@ double evaluate(Filter<fp_t, fp_len> &filter,
 	printf("false negative rate = %.3f%%\n", false_negative * 100.0 / n);
 	printf("false positive rate = %.3f%%\n", false_positive * 100.0 / q);
 	printf("load factor = %.3f\n", filter.get_load_factor());
+    printf("full bucket factor = %.3f\n", filter.get_full_bucket_factor());
+    filter.debug_test();
 
     return filter.get_load_factor();
 }
 
-const int maxSteps = 500; // threshold for kick steps
+const int maxSteps = 400; // threshold for kick steps
 vector<int> insKey, lupKey;
 
 int main(int argc, char **argv)
@@ -66,8 +75,9 @@ int main(int argc, char **argv)
 	int seed  = 0;
 	int cmd_n = 100000;
 	int cmd_q = 1000000;
+    int times = 1;
 	FILE *fp  = stdin;
-	while ((c = getopt(argc, argv, "r:f:n:q:")) != EOF) {
+	while ((c = getopt(argc, argv, "r:f:n:q:t:")) != EOF) {
 		switch (c) {
 		case 'r':
 			seed = atoi(optarg);
@@ -84,6 +94,12 @@ int main(int argc, char **argv)
 			cmd_q = atoi(optarg);
             printf("cmd_q == %d\n", cmd_q);
 			break;
+            
+		case 't':
+			times = atoi(optarg);
+            printf("times == %d\n", times);
+			break;
+            
 		default:
 			break;
 		}	
@@ -130,12 +146,10 @@ int main(int argc, char **argv)
     
     */
 
-    /*
 
     printf("maxSteps %d\n", maxSteps);
     double sum1 = 0;
     double sum2 = 0;
-    int times = 50;
 
 	mt19937 rd(seed);
 
@@ -151,28 +165,42 @@ int main(int argc, char **argv)
 		for (int i = 1; i <= q; ++i)
 			lupKey.push_back(rd());
 
-        XorFilter<uint8_t, 8> xor_filter;
+        XorFilter<uint16_t, 16> xor_filter;
+        //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+        //m = (int)(n / b);
+        m = (int) (n / b / 0.96 + 1);
+        m += m & 1;
+        xor_filter.init(m, b, maxSteps);
+        //xor_filter.test_bucket();
+        double sb = evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
+        printf("%.5f\n", sb);
+        sum1 += sb;
+
+        /*
+        RandomFilter<uint16_t, 8> xor_filter;
         //m = 1 << (int)(ceil(log2(n / b / 0.95)));
         m = n / b;
         //m = (int) (n / b / 0.95 + 1);
         m += m & 1;
         xor_filter.init(m, b, maxSteps);
-        double sb = evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
+        double sb = evaluate(xor_filter, "random-CuckooFilter", insKey, lupKey);
         printf("%.5f\n", sb);
         sum1 += sb;
+        */
 
-        AddFilter<uint8_t, 8> new_filter;
+        /*
+        AddSubFilter<uint8_t, 8> new_filter;
         //m = 1 << (int)(ceil(log2(n / b / 0.95)));
         //m = (int) (n / b / 0.96 + 1);
         m = n / b;
         m += m & 1;
         new_filter.init(m, b, maxSteps);
-        sum2 += evaluate(new_filter, "Morton-CuckooFilter", insKey, lupKey);
+        sum2 += evaluate(new_filter, "addsub-CuckooFilter", insKey, lupKey);
+        */
     }
 
     printf("%.5f %.5f\n", sum1 / times, sum2 / times);
 
-    */
 
     //b = 16;
 
@@ -188,6 +216,7 @@ int main(int argc, char **argv)
 
     // uint16 : buggy...
 
+    /*
     MortonAddFilter<uint8_t, 8> new_filter;
     //m = 1 << (int)(ceil(log2(n / b / 0.95)));
     //m = (int) (n / b / 0.95 + 1);
@@ -196,21 +225,32 @@ int main(int argc, char **argv)
     new_filter.init(n, b, maxSteps);
     evaluate(new_filter, "Morton-CuckooFilter", insKey, lupKey);
 
-    XorFilter<uint16_t, 15> xor_filter;
+    XorFilter<uint16_t, 8> xor_filter;
     //m = 1 << (int)(ceil(log2(n / b / 0.95)));
     //m = n / b;
-    m = (int) (n / b / 0.90 + 1);
+    m = (int) (n / b / 0.96 + 1);
     m += m & 1;
     xor_filter.init(m, b, maxSteps);
     evaluate(xor_filter, "xor-CuckooFilter", insKey, lupKey);
-    //printf("%.5f\n", sb);
+    printf("full factor = %.5f\n", xor_filter.get_full_bucket_factor());
     //sum1 += sb;
 
     BloomFilter<uint8_t, 8> bloom_filter;
-	m = (int) (n / b / 0.95 + 1);
+	m = (int) (n / b / 0.96 + 1);
 	m += m & 1;
 	bloom_filter.init(m, b, maxSteps);
 	evaluate(bloom_filter, "bloom-CuckooFilter", insKey, lupKey);
+
+    AddSubFilter<uint16_t, 8> add_filter;
+    //m = 1 << (int)(ceil(log2(n / b / 0.95)));
+    //m = n / b;
+    m = (int) (n / b / 0.96 + 1);
+    m += m & 1;
+    add_filter.init(m, b, maxSteps);
+    evaluate(add_filter, "add-sub-CuckooFilter", insKey, lupKey);
+    printf("full factor = %.5f\n", add_filter.get_full_bucket_factor());
+    //sum1 += sb;
+    */
 
 	return 0;	
 }

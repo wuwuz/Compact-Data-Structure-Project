@@ -4,7 +4,6 @@
 #include "hashutil.h"
 #include <cstdio>
 #include <cstdint>
-#include <iostream>
 #include <cstring>
 #include <algorithm>
 #include <random>
@@ -54,9 +53,9 @@ class Filter
     virtual int insert(int ele) = 0;
     virtual bool lookup(int ele) = 0;
     int position_hash(int ele); // hash to range [0, n - 1]
-    virtual double get_load_factor() = 0;
-    virtual double get_full_bucket_factor() = 0;
-    virtual void debug_test() = 0;
+    virtual double get_load_factor() {return 0;}
+    virtual double get_full_bucket_factor() {return 0;}
+    virtual void debug_test() {}
 };
 
 template <typename fp_t, int fp_len>
@@ -71,22 +70,20 @@ class BloomFilter : public Filter<fp_t, fp_len>
     public : 
 
     int shift;
-    fp_t *T;
+    char *T;
 	~BloomFilter() { free(T); }
 
     void init(int _n, int _m, int _max_kick_steps = 0)
     {
-        shift = 0;
-        int t = fp_len;
-        for (; t > 1; t >>= 1) shift++;
+        shift = 3;
 
         this -> n = _n * _m * fp_len;
-        this -> memory_consumption = _n * _m * sizeof(fp_t);
-        T = (fp_t*) calloc(_n * _m, sizeof(fp_t)); // how many bytes
+        this -> memory_consumption = ROUNDUP(_n * _m * fp_len + 64, 8) / 8;
+        T = (char *)calloc(this -> memory_consumption, sizeof(char)); // how many bytes
     }
     void clear()
     {
-	    memset(T, 0, sizeof(fp_t) * (this -> n / fp_len));
+	    memset(T, 0, sizeof(char) * this -> memory_consumption);
     }
     void set_item(int pos)
     {
@@ -305,7 +302,7 @@ class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
     int max_2_power;
     virtual void init(int _n, int _m, int _max_kick_steps);
 	void clear();
-    int insert(int ele);
+    virtual int insert(int ele);
     bool lookup(int ele);
     double get_load_factor();
     double get_full_bucket_factor();
@@ -421,12 +418,14 @@ void SemiSortCuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 
     int how_many_bit = this -> n * this -> m * (fp_len - 1);
 
-    this -> memory_consumption = ROUNDUP(ROUNDUP(how_many_bit, 8) / 8 + 8, 8); // how many bytes !
+    //deln(how_many_bit);
+
+    this -> memory_consumption = ROUNDUP(how_many_bit + 64, 8) / 8; // how many bytes !
 
     max_2_power = 1;
     for (; max_2_power * 2 < _n; ) max_2_power <<= 1;
 
-    //this -> T = (fp_t*) calloc(this -> n * this -> m, sizeof(fp_t));
+    //this -> t = (fp_t*) calloc(this -> n * this -> m, sizeof(fp_t));
     this -> T = (uint32_t *) calloc(this -> memory_consumption, sizeof(char));
 
     if (this -> m == 4)
@@ -454,7 +453,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
                         decode_table[index] = plain_bit;
                         ++index;
                     }
-        deln(index);
+        //deln(index);
     }
 }
 
@@ -480,6 +479,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
     //
     // Little Endian Store
     // Store by uint32_t
+    // store[this -> m] = bucket number
 
 
     // 1. read the endcoded bits from memory
@@ -535,9 +535,12 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
     int decode_result = decode_table[result];
     //printf("high_code = %x\n", decode_result);
 
+    store[this -> m] = 0;
+
     for (int i = this -> m - 1; i >= 0; i--)
     {
         store[i] = ((decode_result & ((1 << 4) - 1)) << (fp_len - 4)) + store[i];
+        store[this -> m] += store[i] != 0;
         decode_result >>= 4;
     }
 }
@@ -635,6 +638,8 @@ int SemiSortCuckooFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
 
     //get_bucket(pos, store);
 
+    if (store[this -> m] == this -> m) return 1 + 4;
+
     for (int i = 0; i < this -> m; i++) 
     {
         if (store[i] == 0)
@@ -656,75 +661,11 @@ int SemiSortCuckooFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
     return 1 + 4;
 }
 
-/*
 template <typename fp_t, int fp_len>
 int SemiSortCuckooFilter<fp_t, fp_len>::insert(int ele)
 {
-
-    // If insert success return 0
-    // If insert fail return 1
-
-    fp_t fp = fingerprint(ele);
-    int cur1 = this -> position_hash(ele);
-    int cur2 = alternate(cur1, fp);
-    if (alternate(cur2, fp) != cur1)
-    {
-        deln(ele);
-        deln(fp);
-        printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
-        printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
-    }
-
-    fp_t store1[8];
-    fp_t store2[8];
-
-    get_bucket(cur1, store1);
-    get_bucket(cur2, store2);
-
-    if (insert_to_bucket(store1, fp) == 0) {filled_cell++; set_bucket(cur1, store1); return 0;}
-    if (insert_to_bucket(store2, fp) == 0) {filled_cell++; set_bucket(cur2, store2); return 0;}
-
-    //randomly choose one bucket's elements to kick
-    int rk = rand() % this -> m;
-
-    //get those item
-    int cur;
-    fp_t *cur_store;
-
-    if (rand() & 1)
-        cur = cur1, cur_store = store1;
-    else 
-        cur = cur2, cur_store = store2;
-
-    fp_t tmp_fp = cur_store[rk];
-    cur_store[rk] = fp;
-    set_bucket(cur, cur_store);
-
-    int alt = alternate(cur, tmp_fp);
-    
-    for (int i = 0; i < this -> max_kick_steps; i++)
-    {
-        memset(store1, 0, sizeof(store1));
-        get_bucket(alt, store1);
-        if (insert_to_bucket(store1, tmp_fp) == 0) 
-        {
-            filled_cell++; 
-            set_bucket(alt, store1);
-            return 0;
-        }
-
-        rk = rand() % this -> m;
-        fp = store1[rk];
-        store1[rk] = tmp_fp;
-        set_bucket(alt, store1);
-
-        tmp_fp = fp;
-        alt = alternate(alt, tmp_fp);
-    }
-
     return 1;
 }
-*/
 
 template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::make_balance()
@@ -754,265 +695,6 @@ void SemiSortCuckooFilter<fp_t, fp_len>::make_balance()
         }
     }
     deln(success);
-}
-
-template <typename fp_t, int fp_len>
-int SemiSortCuckooFilter<fp_t, fp_len>::insert(int ele)
-{
-
-    if (SemiSortCuckooFilter<fp_t, fp_len>::lookup(ele) == true)
-    {
-        ++filled_cell;
-        return 0;
-    }
-    // If insert success return 0
-    // If insert fail return 1
-
-    /*
-    if (balance == false && get_load_factor() > 0.94)
-    {
-        make_balance();
-        balance = true;
-    }
-    */
-
-    fp_t fp = fingerprint(ele);
-    int cur1 = this -> position_hash(ele);
-    int cur2 = alternate(cur1, fp);
-    if (alternate(cur2, fp) != cur1)
-    {
-        deln(ele);
-        deln(fp);
-        printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
-        printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
-    }
-
-    fp_t store1[8];
-    fp_t store2[8];
-
-    int cnt1 = 0, cnt2 = 0;
-    int res1 = 0, res2 = 0;
-    get_bucket(cur1, store1);
-    for (int i = 0; i < this -> m; i++) cnt1 += (store1[i] != 0);
-    get_bucket(cur2, store2);
-    for (int i = 0; i < this -> m; i++) cnt2 += (store2[i] != 0);
-
-    if (cnt1 <= cnt2)
-    {
-        if ((res1 = insert_to_bucket(store1, fp)) == 0) {filled_cell++; set_bucket(cur1, store1); return 0;}
-        //if ((res2 = insert_to_bucket(store2, fp)) == 0) {filled_cell++; set_bucket(cur2, store2); return 0;}
-    } else
-    {
-        if ((res2 = insert_to_bucket(store2, fp)) == 0) {filled_cell++; set_bucket(cur2, store2); return 0;}
-        //if ((res1 = insert_to_bucket(store1, fp)) == 0) {filled_cell++; set_bucket(cur1, store1); return 0;}
-    }
-
-    /*
-    //choose one slot to insert fp
-    int cur;
-    fp_t *cur_store;
-
-    if (rand() & 1)
-        cur = cur1, cur_store = store1;
-    else 
-        cur = cur2, cur_store = store2;
-        */
-
-    // use bfs to search one non-full bucket
-
-    static fp_t bucket[2000][4];
-    static int bucket_pos[2000];
-    int bucket_cnt = 0;
-
-    static int index[3000];
-    static int id[3000];
-    static int prev[3000];
-    static fp_t que_fp[3000];
-
-    // index[i][0] : index in bucket array
-    // id[i][1] : index in one bucket
-    // prev[i][2] : previous status in bfs array
-    // que_fp[i] : the fp queue!
-
-    bool opt = false;
-
-    if (get_load_factor() > 0.95)
-        opt = true;
-
-    int l = 0, r = 0, final_cnt = 100, p = -1;
-
-    //BloomFilter<uint8_t, 8> filter;
-    //filter.init(this -> max_kick_steps * 4, 4); //  200 * 4 * 8
-
-    /*
-    if (res1 < 5)
-    {
-        //opt for one bit
-        for (int i = 0; i < this -> m; i++) bucket[0][i] = store1[i];
-        ++r;
-        index[r] = 0;
-        id[r] = res1 - 1;
-        prev[r] = -1;
-        que_fp[r] = store1[id[r]];
-        filter.insert((cur1 << 2) + id[r]);
-    }
-    else 
-    {
-    */
-    for (int i = 0; i < this -> m; i++) 
-    {
-        bucket[0][i] = store1[i];
-        ++r;
-        index[r] = 0;
-        id[r] = i;
-        prev[r] = -1;
-        que_fp[r] = store1[i];
-        //filter.insert((cur1 << 2) + id[r]);
-    }
-
-    bucket_pos[0] = cur1;
-
-    /*
-    if (res2 < 5)
-    {
-        // opt for one bit
-        for (int i = 0; i < this -> m; i++) bucket[1][i] = store2[i];
-        ++r;
-        index[r] = 1;
-        id[r] = res2 - 1;
-        prev[r] = -1;
-        que_fp[r] = store2[id[r]];
-        filter.insert((cur2 << 2) + id[r]);
-    }
-    else
-    */
-    for (int i = 0; i < this -> m; i++) 
-    {
-        ++r;
-        bucket[1][i] = store2[i];
-        index[r] = 1;
-        id[r] = i;
-        prev[r] = -1;
-        que_fp[r] = store2[i];
-        //filter.insert((cur2 << 2) + id[r]);
-    }
-
-    bucket_pos[1] = cur2;
-
-    bucket_cnt = 1;
-    bool quit = false;
-
-    for (; l < r && r < max_kick_steps * 4 && quit == false; )
-    {
-        ++l;
-        fp_t cur_fp = que_fp[l];
-        int pos = bucket_pos[index[l]];
-        //deln(pos);
-        int alt = alternate(pos, cur_fp);
-        if (cur_fp == 0) continue;
-        //if (filter.lookup(alt) == true) continue;
-
-        int bc = ++bucket_cnt;
-        get_bucket(alt, bucket[bc]);
-        bucket_pos[bc] = alt;
-        //filter.insert(alt);
-        //
-
-        /*
-        bool collide = false;
-        for (int i = 0; i < this -> m; i++)
-            if (bucket[bc][i] != 0 && high_bit(bucket[bc][i]) == high_bit(cur_fp))
-            {
-                collide = true;
-
-                if (filter.lookup((alt << 2) + i) == true) break;
-                filter.insert((alt << 2) + i);
-
-                ++r;
-                index[r] = bc;
-                id[r] = i;
-                prev[r] = l;
-                que_fp[r] = bucket[bc][i];
-
-                break;
-            }
-
-        if (collide == true) continue;
-        */
-
-        for (int i = 0; i < this -> m; i++) 
-        {
-            //if (filter.lookup((alt << 2) + i) == true) continue;
-            //filter.insert((alt << 2) + i);
-
-            ++r;
-            index[r] = bc;
-            id[r] = i;
-            prev[r] = l;
-            que_fp[r] = bucket[bc][i];
-
-            if (bucket[bc][i] == 0)
-            {
-                // find a empty slot !
-                if (final_cnt > i)
-                {
-                    final_cnt = i;
-                    p = r;
-                }
-                // if opt : find the best
-                // if not opt : find the first
-                if (opt == false || final_cnt == 0)  
-                {
-                    quit = true;
-                }
-
-                break;
-            }
-        }
-    }
-
-    /*
-    if (bucket_cnt >= max_kick_steps)
-    {
-        deln(bucket_cnt);
-        deln(r);
-    }
-    */
-    /*
-    assert(bucket_cnt < max_kick_steps);
-    assert(r < max_kick_steps * 4);
-    */
-
-    if (final_cnt == 100) 
-    {
-        /*
-        printf("fp = %x\n", fp);
-        printf("que pos : \n");
-        for (int i = 0; i < bucket_cnt; i++)
-            printf("%d ", bucket_pos[i]);
-        puts("");
-        */
-        return 1; // insert fail
-    }
-
-    for (; p > 0; p = prev[p])
-    {
-        if (prev[p] == -1)
-            bucket[index[p]][id[p]] = fp; // move the original fp to the bucket
-        else
-            bucket[index[p]][id[p]] = que_fp[prev[p]]; // move the previous fp into current bucket !
-
-        set_bucket(bucket_pos[index[p]], bucket[index[p]]);
-    }
-
-    filled_cell++;
-    if (final_cnt == this -> m - 1)
-        full_bucket++;
-
-    return 0; // succeed !
-    /*
-    puts("");
-    */
 }
 
 template <typename fp_t, int fp_len>
@@ -1143,8 +825,13 @@ void MortonFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
     this -> max_kick_steps = _step;
     this -> filled_cell = 0;
 
-    this -> block_number = ROUNDUP(int(_n / 0.95), 46) / 46;
+    //deln(_n);
+    //deln(_m);
+    this -> block_number = ROUNDUP(_n * _m, 46) / 46;
+    //deln(this -> block_number * 46);
+
     int how_many_bit = this -> block_number * 512;
+    //deln(how_many_bit);
 
     // here, we use memory_consumption as standard
 
@@ -1471,6 +1158,8 @@ int MortonFilter<fp_t, fp_len>::lookup_in_bucket(int pos, fp_t fp)
             return 1;
         isFull &= (t != 0);
     }
+
+    if (store[3] == 46) isFull = 1;
     return (isFull) ? 2 : 3;
 }
 
@@ -1497,6 +1186,7 @@ bool MortonFilter<fp_t, fp_len>::lookup(int ele)
     int ok1 = lookup_in_bucket(pos1, fp);
 
     if (ok1 == 1) return true;
+    if (ok1 == 3) return false;
 
     int ok2 = lookup_in_bucket(pos2, fp);
 
@@ -1539,10 +1229,139 @@ class StandardCuckooFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         //    puts("cuckoo xor 0");
         return ret;
     }
+
+    public : 
+    int insert(int ele)
+    {
+        // If insert success return 0
+        // If insert fail return 1
+
+        fp_t fp = this -> fingerprint(ele);
+        int cur1 = this -> position_hash(ele);
+        int cur2 = this -> alternate(cur1, fp);
+
+        fp_t store1[8];
+        fp_t store2[8];
+
+        this -> get_bucket(cur1, store1);
+        this -> get_bucket(cur2, store2);
+
+        if ((this -> insert_to_bucket(store1, fp)) == 0) {this -> filled_cell++; this -> set_bucket(cur1, store1); return 0;}
+        if ((this -> insert_to_bucket(store2, fp)) == 0) {this -> filled_cell++; this -> set_bucket(cur2, store2); return 0;}
+
+        // use bfs to search one non-full bucket
+
+        static fp_t bucket[2000][4];
+        static int bucket_pos[2000];
+        int bucket_cnt = 0;
+
+        static int index[3000];
+        static int id[3000];
+        static int prev[3000];
+        static fp_t que_fp[3000];
+
+        // index[i][0] : index in bucket array
+        // id[i][1] : index in one bucket
+        // prev[i][2] : previous status in bfs array
+        // que_fp[i] : the fp queue!
+
+        bool opt = false;
+
+        int l = 0, r = 0, final_cnt = 100, p = -1;
+
+        for (int i = 0; i < this -> m; i++) 
+        {
+            bucket[0][i] = store1[i];
+            ++r;
+            index[r] = 0;
+            id[r] = i;
+            prev[r] = -1;
+            que_fp[r] = store1[i];
+        }
+
+        bucket_pos[0] = cur1;
+        for (int i = 0; i < this -> m; i++) 
+        {
+            ++r;
+            bucket[1][i] = store2[i];
+            index[r] = 1;
+            id[r] = i;
+            prev[r] = -1;
+            que_fp[r] = store2[i];
+        }
+        bucket_pos[1] = cur2;
+
+        bucket_cnt = 1;
+        bool quit = false;
+
+        for (; l < r && r < this -> max_kick_steps * 4 && quit == false; )
+        {
+            ++l;
+            fp_t cur_fp = que_fp[l];
+            int pos = bucket_pos[index[l]];
+            int alt = this -> alternate(pos, cur_fp);
+            if (cur_fp == 0) continue;
+
+            int bc = ++bucket_cnt;
+            this -> get_bucket(alt, bucket[bc]);
+            bucket_pos[bc] = alt;
+
+            for (int i = 0; i < this -> m; i++) 
+            {
+                ++r;
+                index[r] = bc;
+                id[r] = i;
+                prev[r] = l;
+                que_fp[r] = bucket[bc][i];
+
+                if (bucket[bc][i] == 0)
+                {
+                    // find a empty slot !
+                    if (final_cnt > i)
+                    {
+                        final_cnt = i;
+                        p = r;
+                    }
+                    // if opt : find the best
+                    // if not opt : find the first
+                    if (opt == false || final_cnt == 0) quit = true;
+                    break;
+                }
+            }
+        }
+        if (final_cnt == 100) 
+        {
+            /*
+            printf("fp = %x\n", fp);
+            printf("que pos : \n");
+            for (int i = 0; i < bucket_cnt; i++)
+                printf("%d ", bucket_pos[i]);
+            puts("");
+            */
+            return 1; // insert fail
+        }
+
+        for (; p > 0; p = prev[p])
+        {
+            if (prev[p] == -1)
+                bucket[index[p]][id[p]] = fp; // move the original fp to the bucket
+            else
+                bucket[index[p]][id[p]] = que_fp[prev[p]]; // move the previous fp into current bucket !
+
+            this -> set_bucket(bucket_pos[index[p]], bucket[index[p]]);
+        }
+
+        this -> filled_cell++;
+        if (final_cnt == this -> m - 1)
+            this -> full_bucket++;
+
+        return 0; // succeed !
+    }
+
 }; 
 
 template <typename fp_t, int fp_len>
-class XorFilter : public SemiSortCuckooFilter<fp_t, fp_len>
+class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
 {
     private : 
     int alternate(int pos, fp_t fp) // get alternate position
@@ -1610,6 +1429,272 @@ class XorFilter : public SemiSortCuckooFilter<fp_t, fp_len>
 
         return ret;
     }
+    public : 
+
+
+    int insert(int ele)
+    {
+
+        if (this -> lookup(ele) == 1)
+        {
+            ++this -> filled_cell;
+            return 0;
+        }
+        // If insert success return 0
+        // If insert fail return 1
+
+        fp_t fp = this -> fingerprint(ele);
+        int cur1 = this -> position_hash(ele);
+        int cur2 = alternate(cur1, fp);
+
+        fp_t store1[8];
+        fp_t store2[8];
+        fp_t store3[8];
+
+        this -> get_bucket(cur1, store1);
+        this -> get_bucket(cur2, store2);
+
+
+        if (store1[this -> m] <= store2[this -> m])
+        {
+            if (this -> insert_to_bucket(store1, fp) == 0) {this -> filled_cell++; this -> set_bucket(cur1, store1); return 0;}
+        } else
+        {
+            if (this -> insert_to_bucket(store2, fp) == 0) {this -> filled_cell++; this -> set_bucket(cur2, store2); return 0;}
+        }
+
+        // look foward once
+        for (int j = 0; j < this -> m; j++)
+        {
+            int nex = alternate(cur1, store1[j]);
+            this -> get_bucket(nex, store3);
+            if (store3[this -> m] < this -> m)
+            {
+                store3[this -> m - 1] = store1[j];
+                store1[j] = fp;
+                this -> filled_cell++;
+                this -> set_bucket(nex, store3);
+                this -> set_bucket(cur1, store1);
+                return 0;
+            }
+        }
+
+        for (int j = 0; j < this -> m; j++)
+        {
+            int nex = alternate(cur2, store2[j]);
+            this -> get_bucket(nex, store3);
+            if (store3[this -> m] < this -> m)
+            {
+                store3[this -> m - 1] = store2[j];
+                store2[j] = fp;
+                this -> filled_cell++;
+                this -> set_bucket(nex, store3);
+                this -> set_bucket(cur2, store2);
+                return 0;
+            }
+        }
+
+        //randomly choose one bucket's elements to kick
+        int rk = rand() % this -> m;
+
+        //get those item
+        int cur;
+        fp_t *cur_store;
+
+        if (rand() & 1)
+            cur = cur1, cur_store = store1;
+        else 
+            cur = cur2, cur_store = store2;
+
+        fp_t tmp_fp = cur_store[rk];
+        cur_store[rk] = fp;
+        this -> set_bucket(cur, cur_store);
+
+        int alt = alternate(cur, tmp_fp);
+        
+        for (int i = 0; i < this -> max_kick_steps; i++)
+        {
+            memset(store1, 0, sizeof(store1));
+            this -> get_bucket(alt, store1);
+            if (store1[this -> m] == this -> m)
+            {
+                for (int j = 0; j < this -> m; j++)
+                {
+                    int nex = alternate(alt, store1[j]);
+                    this -> get_bucket(nex, store2);
+                    if (store2[this -> m] < this -> m)
+                    {
+                        store2[this -> m - 1] = store1[j];
+                        store1[j] = tmp_fp;
+                        this -> filled_cell++;
+                        this -> set_bucket(nex, store2);
+                        this -> set_bucket(alt, store1);
+                        return 0;
+                    }
+                }
+
+                rk = rand() % this -> m;
+                fp = store1[rk];
+                store1[rk] = tmp_fp;
+                this -> set_bucket(alt, store1);
+
+                tmp_fp = fp;
+                alt = alternate(alt, tmp_fp);
+            } else
+            {
+                store1[this -> m - 1] = tmp_fp;
+                this -> filled_cell++; 
+                this -> set_bucket(alt, store1);
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+/*
+    int insert(int ele)
+    {
+        // If insert success return 0
+        // If insert fail return 1
+
+        if (this -> lookup(ele) == true)
+        {
+            ++(this -> filled_cell);
+            return 0;
+        }
+
+        fp_t fp = this -> fingerprint(ele);
+        int cur1 = this -> position_hash(ele);
+        int cur2 = this -> alternate(cur1, fp);
+
+        fp_t store1[8];
+        fp_t store2[8];
+
+        int cnt1 = 0, cnt2 = 0;
+        int res1 = 0, res2 = 0;
+        this -> get_bucket(cur1, store1);
+        for (int i = 0; i < this -> m; i++) cnt1 += (store1[i] != 0);
+        this -> get_bucket(cur2, store2);
+        for (int i = 0; i < this -> m; i++) cnt2 += (store2[i] != 0);
+
+        if (cnt1 <= cnt2)
+        {
+            if ((res1 = this -> insert_to_bucket(store1, fp)) == 0) {this -> filled_cell++; this -> set_bucket(cur1, store1); return 0;}
+            //if ((res2 = insert_to_bucket(store2, fp)) == 0) {filled_cell++; set_bucket(cur2, store2); return 0;}
+        } else
+        {
+            if ((res2 = this -> insert_to_bucket(store2, fp)) == 0) {this -> filled_cell++; this -> set_bucket(cur2, store2); return 0;}
+            //if ((res1 = insert_to_bucket(store1, fp)) == 0) {filled_cell++; set_bucket(cur1, store1); return 0;}
+        }
+
+        // use bfs to search one non-full bucket
+
+        static fp_t bucket[2000][4];
+        static int bucket_pos[2000];
+        int bucket_cnt = 0;
+
+        static int index[3000];
+        static int id[3000];
+        static int prev[3000];
+        static fp_t que_fp[3000];
+
+        // index[i][0] : index in bucket array
+        // id[i][1] : index in one bucket
+        // prev[i][2] : previous status in bfs array
+        // que_fp[i] : the fp queue!
+
+        bool opt = (this -> get_load_factor() > 0.95) ? true : false;
+
+        int l = 0, r = 0, final_cnt = 100, p = -1;
+
+        for (int i = 0; i < this -> m; i++) 
+        {
+            bucket[0][i] = store1[i];
+            ++r;
+            index[r] = 0;
+            id[r] = i;
+            prev[r] = -1;
+            que_fp[r] = store1[i];
+        }
+
+        bucket_pos[0] = cur1;
+        for (int i = 0; i < this -> m; i++) 
+        {
+            ++r;
+            bucket[1][i] = store2[i];
+            index[r] = 1;
+            id[r] = i;
+            prev[r] = -1;
+            que_fp[r] = store2[i];
+        }
+        bucket_pos[1] = cur2;
+
+        bucket_cnt = 1;
+        bool quit = false;
+
+        for (; l < r && r < this -> max_kick_steps * 4 && quit == false; )
+        {
+            ++l;
+            fp_t cur_fp = que_fp[l];
+            int pos = bucket_pos[index[l]];
+            int alt = this -> alternate(pos, cur_fp);
+            if (cur_fp == 0) continue;
+
+            int bc = ++bucket_cnt;
+            this -> get_bucket(alt, bucket[bc]);
+            bucket_pos[bc] = alt;
+
+            for (int i = 0; i < this -> m; i++) 
+            {
+                ++r;
+                index[r] = bc;
+                id[r] = i;
+                prev[r] = l;
+                que_fp[r] = bucket[bc][i];
+
+                if (bucket[bc][i] == 0)
+                {
+                    // find a empty slot !
+                    if (final_cnt > i)
+                    {
+                        final_cnt = i;
+                        p = r;
+                    }
+                    // if opt : find the best
+                    // if not opt : find the first
+                    if (opt == false || final_cnt == 0) quit = true;
+                    break;
+                }
+            }
+        }
+        if (final_cnt == 100) 
+        {
+            printf("fp = %x\n", fp);
+            printf("que pos : \n");
+            for (int i = 0; i < bucket_cnt; i++)
+                printf("%d ", bucket_pos[i]);
+            puts("");
+            return 1; // insert fail
+        }
+
+        for (; p > 0; p = prev[p])
+        {
+            if (prev[p] == -1)
+                bucket[index[p]][id[p]] = fp; // move the original fp to the bucket
+            else
+                bucket[index[p]][id[p]] = que_fp[prev[p]]; // move the previous fp into current bucket !
+
+            this -> set_bucket(bucket_pos[index[p]], bucket[index[p]]);
+        }
+
+        this -> filled_cell++;
+        if (final_cnt == this -> m - 1)
+            this -> full_bucket++;
+
+        return 0; // succeed !
+    }
+
+*/
 }; 
 
 template <typename fp_t, int fp_len>

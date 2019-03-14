@@ -3,6 +3,10 @@
 #include <unistd.h>
 #include "hashutil.h"
 #include "cuckoo.h"
+#include <time.h>
+#include <ratio>
+#include <chrono>
+//#include <cuckoofilter.h>
 
 #define debug(a) cerr << #a << " = " << a << ' '
 #define deln(a)  cerr << #a << " = " << a << endl
@@ -17,8 +21,6 @@ void evaluate(Filter<fp_t, fp_len> &filter,
               vector<double> &result,
               bool verbose = false)
 {
-    // return load factor
-    //
 	int fail_insert = 0;
 	int false_positive = 0;
 	int false_negative = 0;
@@ -95,6 +97,7 @@ void test_memory_usage()
 
     FILE *out = NULL;
     out = fopen("key-memory.csv", "w");
+    assert(out != NULL);
 
     fprintf(out, "key number, Semi-Sort-Cuckoo-Filter-12bit, Morton-Filter, Vacuum-Filter-12bit, Vacuum-Filter-11bit, Bloom-Filter-12bit\n");
     int max = 10000000;
@@ -102,7 +105,7 @@ void test_memory_usage()
     for (int n = 1000; n <= max; n += 1000)
     {
         if (n % (max / 100) == 0)
-            printf("process : %d%\n", n / (max / 100));
+            printf("process : %d%%\n", n / (max / 100));
 
         StandardCuckooFilter<uint16_t, 12> sscf;
         m = 1 << (int)(ceil(log2(n / b / 0.95)));
@@ -138,6 +141,7 @@ void test_all()
 {
     FILE *out = NULL;
     out = fopen("all-performance.csv", "w");
+    assert(out != NULL);
 
     //result : 
     //0 : memory usage
@@ -147,24 +151,29 @@ void test_all()
     //4 : load factor
     //5 : bits per item
 
+    VacuumFilter<uint16_t, 11> sb;
+    sb.init(100, 4, 200);
+    sb.test_bucket();
+
+    printf("pass\n");
     fprintf(out, "key size, ");
 
     const int test_time = 11;
     const int key[test_time] = {(1 << 16) + 1, 10000, 100000, 200000, 300000, 1000000, 2000000, 3000000, 4000000, 5000000, 6000000};
-    const string name[4] = {"Vacuum", "Standard", "Morton", "Bloom"};
+    const string name[5] = {"Vacuum", "Standard", "Morton", "Bloom", "Offset"};
     const string metric[6] = {"memory", "fail insert", "false negative", "false positive", "load factor", "bits per item"};
 
     for (int i = 0; i < 6; i++)
-        for (int j = 0; j < 4; j++)
+        for (int j = 0; j < 5; j++)
         {
             string tmp = name[j] + " " + metric[i];
-            if (i != 5 || j != 3)
+            if (i != 5 || j != 4)
                 fprintf(out, "%s, ", tmp.c_str());
             else 
                 fprintf(out, "%s\n", tmp.c_str());
         }
 
-    for (int i = 0; i < test_time; i++)
+    for (int i = 0; i < 5; i++)
     {
         int n = key[i];
         int q = 1000000;
@@ -172,7 +181,6 @@ void test_all()
         int b = 4;
         int seed = 1;
         int m;
-
 
         vector<int> insKey;
         vector<int> lupKey;
@@ -183,15 +191,13 @@ void test_all()
         for (int i = 1; i <= q; ++i)
             lupKey.push_back(rd());
 
-        vector<double> res[4];
+        vector<double> res[5];
 
         VacuumFilter<uint16_t, 11> vf;
         m = (int) (n / b / 0.96 + 1);
         m += m & 1;
         vf.init(m, b, maxSteps);
         evaluate(vf, name[0].c_str(), insKey, lupKey, res[0]);
-
-        deln(m);
 
         StandardCuckooFilter<uint16_t, 11> cf;
         m = 1 << (int)(ceil(log2(n / b / 0.95)));
@@ -205,25 +211,210 @@ void test_all()
         mf.init(m, b, maxSteps);
         evaluate(mf, name[2].c_str(),  insKey, lupKey, res[2]);
 
-        printf("start\n");
         BloomFilter<uint16_t, 11> bf;
         m = (int) (n / b / 0.95 + 1);
         m += m & 1;
         bf.init(m, b, maxSteps);
-        printf("mid\n");
         evaluate(bf, name[3].c_str(),  insKey, lupKey, res[3]);
-        printf("finish\n");
+
+        OffsetFilter<uint16_t, 11> of;
+        m = (int) (n / b / 0.96 + 1);
+        m += m & 1;
+        of.init(m, b, maxSteps);
+        evaluate(of, name[4].c_str(), insKey, lupKey, res[4]);
 
         fprintf(out, "%d, ", n);
 
         for (int j = 0; j < 6; j++)
-            for (int k = 0; k < 4; k++)
+            for (int k = 0; k < 5; k++)
             {
-                if (j != 5 || k != 3)
+                if (j != 5 || k != 4)
                     fprintf(out, "%.5f, ", res[k][j]);
                 else
                     fprintf(out, "%.5f\n", res[k][j]);
             }
+    }
+}
+
+void test_load_factor()
+{
+    FILE *out = NULL;
+    out = fopen("load-factor.csv", "w");
+    assert(out != NULL);
+
+    //result : 
+    //0 : memory usage
+    //1 : fail insert rate
+    //2 : false negative rate
+    //3 : false positive rate
+    //4 : load factor
+    //5 : bits per item
+
+    fprintf(out, "key size, ");
+
+    const int test_time = 14;
+    //const int key[test_time] = {5000000, 6000000, 7000000, 8000000};
+    const int key[test_time] = {int((1 << 16) * 0.95), 100000, 200000, 300000, 400000, 500000, 1000000, 2000000, 3000000, 4000000,5000000, 6000000, 7000000, 8000000};
+    const string name[4] = {"Vacuum", "Standard", "Morton", "Offset"};
+    const string metric[6] = {"memory", "fail insert", "false negative", "false positive", "load factor", "bits per item"};
+
+    for (int j = 0; j < 4; j++)
+        {
+            int i = 4;
+            string tmp = name[j] + " " + metric[i];
+            if (j != 4 - 1)
+                fprintf(out, "%s, ", tmp.c_str());
+            else
+                fprintf(out, "%s\n", tmp.c_str());
+        }
+
+    for (int i = 0; i < 9; i++)
+    {
+        int n = key[i];
+        int q = 1;
+        int maxSteps = 400;
+        int b = 4;
+        int seed = 1;
+        int m;
+        int rept = 1;
+        mt19937 rd(seed);
+
+        double load_factor[4];
+        memset(load_factor, 0, sizeof(load_factor));
+
+        for (int j = 0; j < rept; j++)
+        {
+            vector<int> insKey;
+            vector<int> lupKey;
+
+            for (int i = 1; i <= n; ++i)
+                insKey.push_back(rd());
+            for (int i = 1; i <= q; ++i)
+                lupKey.push_back(rd());
+
+            vector<double> res[4];
+
+            VacuumFilter<uint16_t, 11> vf;
+            m = int(n / b);
+            m += m & 1;
+            vf.init(m, b, maxSteps);
+            evaluate(vf, name[0].c_str(), insKey, lupKey, res[0]);
+
+            StandardCuckooFilter<uint16_t, 11> cf;
+            m = 1 << (int)(ceil(log2(n / b)));
+            cf.init(m, b, maxSteps);
+            evaluate(cf, name[1].c_str(),  insKey, lupKey, res[1]);
+
+            MortonAddFilter<uint8_t, 8> mf;
+            m = (int) (n / b);
+            m += m & 1;
+            mf.init(m, b, maxSteps);
+            evaluate(mf, name[2].c_str(),  insKey, lupKey, res[2]);
+
+            OffsetFilter<uint16_t, 11> of;
+            m = int(n / b);
+            m += m & 1;
+            of.init(m, b, maxSteps);
+            evaluate(of, name[4].c_str(), insKey, lupKey, res[3]);
+
+            for (int k = 0; k < 4; k++)
+                load_factor[k] += res[k][4] / rept;
+        }
+
+        fprintf(out, "%d, ", n);
+
+        for (int k = 0; k < 4; k++)
+        {
+            if (k != 3)
+                fprintf(out, "%.5f, ", load_factor[k]);
+            else
+                fprintf(out, "%.5f\n", load_factor[k]);
+        }
+    }
+}
+
+double time_cost(chrono::steady_clock::time_point &start,
+                 chrono::steady_clock::time_point &end)
+{
+     /* Return the time elapse between start and end
+      * count by seconds
+      */
+    double elapsedSeconds = ((end - start).count()) * chrono::steady_clock::period::num / static_cast<double>(chrono::steady_clock::period::den);
+    return elapsedSeconds;
+}
+
+void test_throughput()
+{
+    int n = 10000000;
+    int q = 1000000;
+    int maxSteps = 400;
+    int b = 4;
+    int seed = 1;
+    int m;
+
+    vector<int> insKey;
+    vector<int> lupKey;
+
+    mt19937 rd(seed);
+    for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+    for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+
+    // 1. Insert throughput : 
+    // Test the time to insert n * ratio keys
+
+    FILE *out = fopen("throughput.csv", "w");
+    assert(out != NULL);
+
+    fprintf(out, "key number, occupancy, insert time(s), insert throughput(MOPS)\n");
+    
+    VacuumFilter<uint16_t, 9> vf;
+    m = n / b;
+    vf.init(m, b, maxSteps);
+
+    auto start = chrono::steady_clock::now();
+
+    int i = 0;
+    int ins_cnt = 0;
+    for (double r = 0.05; r <= 0.96; r += 0.05)
+    {
+        //printf("%.2f\n", r);
+        int lim = int(n * r);
+        for (; i < lim; i++) 
+            if (vf.insert(insKey[i]) == 0)
+                ++ins_cnt;
+
+        auto end = chrono::steady_clock::now();
+        double cost = time_cost(start, end);
+        fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
+    }
+
+    VacuumFilter<uint8_t, 8> vf1;
+    m = n / b;
+    vf1.init(m, b, maxSteps);
+
+    fprintf(out, "key number, occupancy, lookup time(s), lookup throughput(MOPS)\n");
+
+    i = 0;
+    for (double r = 0.05; r <= 0.96; r += 0.05)
+    {
+        printf("%.2f\n", r);
+        int lim = int(n * r);
+        for (; i < lim; i++) 
+            if (vf1.insert(insKey[i]) == 0)
+                ++ins_cnt;
+
+        auto start = chrono::steady_clock::now();
+
+        int lookup_number = 0;
+        for (int key : lupKey)
+        {
+            if (vf1.lookup(key) == 0)
+                lookup_number++;
+        }
+        auto end = chrono::steady_clock::now();
+
+        double cost = time_cost(start, end);
+        fprintf(out, "%d, %.2f, %.5f, %.5f\n", q, r, cost, double(q) / 1000000.0 / cost);
     }
 }
 
@@ -237,7 +428,7 @@ int main(int argc, char **argv)
 	int seed  = 0;
 	int cmd_n = 100000;
 	int cmd_q = 1000000;
-    int times = 1;
+    string test_name;
 	FILE *fp  = stdin;
 	while ((c = getopt(argc, argv, "r:f:n:q:t:")) != EOF) {
 		switch (c) {
@@ -258,8 +449,9 @@ int main(int argc, char **argv)
 			break;
             
 		case 't':
-			times = atoi(optarg);
-            printf("times == %d\n", times);
+			//times = atoi(optarg);
+            test_name = optarg;
+            printf("test_name == %s\n", test_name.c_str());
 			break;
             
 		default:
@@ -293,8 +485,10 @@ int main(int argc, char **argv)
     printf("insert keys : %d\n", n);
     printf("lookup times: %d\n\n\n", q);
 
-    test_all();
-    //test_memory_usage();
+    if (test_name == "all") test_all();
+    if (test_name == "memory") test_memory_usage();
+    if (test_name == "load") test_load_factor();
+    if (test_name == "speed") test_throughput();
 
     /*
 	StandardCuckooFilter<uint8_t, 8> standard_cuckoo_filter;

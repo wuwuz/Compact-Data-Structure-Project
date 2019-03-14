@@ -326,8 +326,9 @@ class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
     void set_bucket(int pos, fp_t *sotre);
     void test_bucket();
     void make_balance();
-    int high_bit(fp_t fp);
-    int low_bit(fp_t fp);
+    inline int high_bit(fp_t fp);
+    inline int low_bit(fp_t fp);
+    inline void sort_pair(fp_t &a, fp_t &b);
 
     virtual int alternate(int pos, fp_t fp) = 0; // get alternate position
     virtual int insert_to_bucket(fp_t *store, fp_t fp); // insert one fingerprint to bucket [pos] 
@@ -472,6 +473,7 @@ fp_t SemiSortCuckooFilter<fp_t, fp_len>::fingerprint(int ele)
     return h;
 }
 
+
 template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
 {
@@ -484,25 +486,49 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
 
     // 1. read the endcoded bits from memory
 
-    int bucket_length = (fp_len - 1) * this -> m;
+    int bucket_length = (fp_len - 1) * 4;
     int start_bit_pos = pos * bucket_length;
     int end_bit_pos = start_bit_pos + bucket_length - 1;
     uint64_t result = 0;
-    int readed_bit_count = 0;
 
+    if (ROUNDDOWN(start_bit_pos, 64) == ROUNDDOWN(end_bit_pos, 64))
+    {
+        uint64_t unit = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64];
+        //int reading_lower_bound = MAX(start_bit_pos, ROUNDDOWN(i, 64)) & 63;
+        //int reading_upper_bound = MIN(end_bit_pos, ROUNDDOWN(i, 64) + 63) & 63;
+        int reading_lower_bound = start_bit_pos & 63;
+        int reading_upper_bound = end_bit_pos & 63;
+
+        result = ((uint64_t)unit & ((-1ULL) >> (63 - reading_upper_bound))) >> reading_lower_bound;
+    } else
+    {
+        uint64_t unit1 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64];
+        uint64_t unit2 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64 + 1];
+
+        int reading_lower_bound = start_bit_pos & 63;
+        int reading_upper_bound = end_bit_pos & 63;
+
+        uint64_t t1 = unit1 >> reading_lower_bound;
+        uint64_t t2 = (unit2 & ((1LL << (reading_upper_bound + 1)) - 1)) << (64 - reading_lower_bound);
+        result = t1 + t2;
+    }
+
+    /*
     for (int i = start_bit_pos; i < end_bit_pos; ) // i : bit position
     {
-        // in this 32-bit unit : 
-        uint32_t unit = ((uint32_t *)T)[ROUNDDOWN(i, 32) / 32];
-        int reading_lower_bound = MAX(start_bit_pos, ROUNDDOWN(i, 32)) & 31;
-        int reading_upper_bound = MIN(end_bit_pos, ROUNDDOWN(i, 32) + 31) & 31;
 
-        uint64_t reading_result = ((uint64_t)unit & ((1LL << (reading_upper_bound + 1)) - 1)) >> reading_lower_bound;
+        uint64_t unit = ((uint64_t *)T)[ROUNDDOWN(i, 64) / 64];
+        int reading_lower_bound = MAX(start_bit_pos, ROUNDDOWN(i, 64)) & 63;
+        int reading_upper_bound = MIN(end_bit_pos, ROUNDDOWN(i, 64) + 63) & 63;
+        uint64_t reading_result;
 
-        result = (reading_result << readed_bit_count) + result;
-        readed_bit_count += (reading_upper_bound - reading_lower_bound + 1);
+        reading_result = ((uint64_t)unit & ((-1ULL) >> (63 - reading_upper_bound))) >> reading_lower_bound;
+
+        result = (reading_result << (i - start_bit_pos)) + result;
+        //readed_bit_count += (reading_upper_bound - reading_lower_bound + 1);
         i += (reading_upper_bound - reading_lower_bound + 1);
     }
+    */
 
 
     // 2. read the 4 elements from the encoded bits
@@ -526,23 +552,32 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
     //  encoded high bit(12 bits)   item 0     item 1   item 2  item 3
     //
 
+    /*
     for (int i = this -> m - 1; i >= 0; i--)
     {
         store[i] = result & ((1 << (fp_len - 4)) - 1);
         result >>= (fp_len - 4);
     }
+    */
 
-    int decode_result = decode_table[result];
-    //printf("high_code = %x\n", decode_result);
+    int decode_result = decode_table[result >> (4 * (fp_len - 4))];
 
-    store[this -> m] = 0;
+    store[3] = (result & ((1 << (fp_len - 4)) - 1)) + ((decode_result & ((1 << 4) - 1)) << (fp_len - 4));
+    store[2] = ((result >> (1 * (fp_len - 4))) & ((1 << (fp_len - 4)) - 1)) + (((decode_result >> 4) & ((1 << 4) - 1)) << (fp_len - 4)); 
+    store[1] = ((result >> (2 * (fp_len - 4))) & ((1 << (fp_len - 4)) - 1)) + (((decode_result >> 8) & ((1 << 4) - 1)) << (fp_len - 4));
+    store[0] = ((result >> (3 * (fp_len - 4))) & ((1 << (fp_len - 4)) - 1)) + (((decode_result >> 12) & ((1 << 4) - 1)) << (fp_len - 4));
 
-    for (int i = this -> m - 1; i >= 0; i--)
-    {
-        store[i] = ((decode_result & ((1 << 4) - 1)) << (fp_len - 4)) + store[i];
-        store[this -> m] += store[i] != 0;
-        decode_result >>= 4;
-    }
+    store[4] = 0;
+    store[4] += store[0] != 0;
+    store[4] += store[1] != 0;
+    store[4] += store[2] != 0;
+    store[4] += store[3] != 0;
+}
+
+template <typename fp_t, int fp_len>
+inline void SemiSortCuckooFilter<fp_t, fp_len>::sort_pair(fp_t &a, fp_t &b)
+{
+    if ((a) < (b)) swap(a, b);
 }
 
 template <typename fp_t, int fp_len>
@@ -550,11 +585,12 @@ void SemiSortCuckooFilter<fp_t, fp_len>::set_bucket(int pos, fp_t *store)
 {
     // 0. sort store ! descendant order >>>>>>
 
-    for (int i = 0; i < this -> m; i++)
-        for (int j = i + 1; j < this -> m; j++)
-            if (store[j] > store[i])
-                swap(store[i], store[j]);
-    
+    sort_pair(store[0], store[2]);
+    sort_pair(store[1], store[3]);
+    sort_pair(store[0], store[1]);
+    sort_pair(store[2], store[3]);
+    sort_pair(store[1], store[2]);
+
     /*
     for (int i = 0; i < this -> m - 1; i++)
         if (store[i] != 0 && store[i + 1] == store[i])
@@ -565,41 +601,70 @@ void SemiSortCuckooFilter<fp_t, fp_len>::set_bucket(int pos, fp_t *store)
     uint64_t high_bit = 0;
     uint64_t low_bit = 0;
 
-    for (int i = 0; i < this -> m; i++)
+    low_bit = (store[3] & ((1 << (fp_len - 4)) - 1)) 
+            + ((store[2] & ((1 << (fp_len - 4)) - 1)) << (1 * (fp_len - 4)))
+            + ((store[1] & ((1 << (fp_len - 4)) - 1)) << (2 * (fp_len - 4)))
+            + ((store[0] & ((1 << (fp_len - 4)) - 1)) << (3 * (fp_len - 4)));
+
+    high_bit = ((store[3] >> (fp_len - 4)) & ((1 << 4) - 1))
+             + (((store[2] >> (fp_len - 4)) & ((1 << 4) - 1)) << 4)
+             + (((store[1] >> (fp_len - 4)) & ((1 << 4) - 1)) << 8)
+             + (((store[0] >> (fp_len - 4)) & ((1 << 4) - 1)) << 12);
+
+             /*
+    for (int i = 0; i < 4; i++)
     {
         low_bit = (low_bit << (fp_len - 4)) + (store[i] & ((1 << (fp_len - 4)) - 1));
         high_bit = (high_bit << 4) + ((store[i] >> (fp_len - 4)) & ((1 << 4) - 1));
     }
+    */
 
     // 2. store into memory
     uint64_t high_encode = encode_table[high_bit];
     //printf("high_bit = %x\n", high_bit);
     //printf("high_encode = %x\n", high_encode);
-    uint64_t all_encode = (high_encode << (this -> m * (fp_len - 4))) + low_bit;
+    uint64_t all_encode = (high_encode << (4 * (fp_len - 4))) + low_bit;
 
-    int bucket_length = (fp_len - 1) * this -> m;
+    int bucket_length = (fp_len - 1) * 4;
     int start_bit_pos = pos * bucket_length;
     int end_bit_pos = start_bit_pos + bucket_length - 1;
 
+    if (ROUNDDOWN(start_bit_pos, 64) == ROUNDDOWN(end_bit_pos, 64))
+    {
+        uint64_t unit = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64];
+        int writing_lower_bound = start_bit_pos & 63;
+        int writing_upper_bound = end_bit_pos & 63;
+
+        ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64] = (unit & (((1ULL << writing_lower_bound) - 1) + ((-1ULL) - ((-1ULL) >> (63 - writing_upper_bound)))))
+                                               + ((all_encode & ((1ULL << (writing_upper_bound - writing_lower_bound + 1)) - 1)) << writing_lower_bound);
+    } else
+    {
+        uint64_t unit1 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64];
+        uint64_t unit2 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64 + 1];
+        int writing_lower_bound = start_bit_pos & 63;
+        int writing_upper_bound = end_bit_pos & 63;
+        uint64_t lower_part = all_encode & ((1LL << (64 - writing_lower_bound)) - 1);
+        uint64_t higher_part = all_encode >> (64 - writing_lower_bound);
+        ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64] = (unit1 & ((1LL << writing_lower_bound) - 1)) 
+                                                           + (lower_part << writing_lower_bound);
+        ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64 + 1] = ((unit2 >> (writing_upper_bound + 1)) << (writing_upper_bound + 1))
+                                                               + higher_part;
+    }
+
+    /*
     for (int i = start_bit_pos; i < end_bit_pos; ) // i : bit position
     {
         // in this 32-bit unit : 
-        uint32_t unit = ((uint32_t *)T)[ROUNDDOWN(i, 32) / 32];
-        int writing_lower_bound = MAX(start_bit_pos, ROUNDDOWN(i, 32)) & 31;
-        int writing_upper_bound = MIN(end_bit_pos, ROUNDDOWN(i, 32) + 31) & 31;
+        uint64_t unit = ((uint64_t *)T)[ROUNDDOWN(i, 64) / 64];
+        int writing_lower_bound = MAX(start_bit_pos, ROUNDDOWN(i, 64)) & 63;
+        int writing_upper_bound = MIN(end_bit_pos, ROUNDDOWN(i, 64) + 63) & 63;
 
-        uint64_t tmp = (unit & ((1LL << writing_lower_bound) - 1));
-        tmp += ((all_encode & ((1LL << (writing_upper_bound - writing_lower_bound + 1)) - 1)) << writing_lower_bound);
-        //tmp += (unit & (~((1 << (writing_upper_bound + 1)) - 1)));
-        uint32_t sb =  ((uint64_t)unit >> (writing_upper_bound + 1)) << (writing_upper_bound + 1);
-        tmp += sb;
-
-        ((uint32_t *)T)[ROUNDDOWN(i, 32) / 32] = tmp;
-
+        ((uint64_t *)T)[ROUNDDOWN(i, 64) / 64] = (unit & (((1ULL << writing_lower_bound) - 1) + ((-1ULL) - ((-1ULL) >> (63 - writing_upper_bound)))))
+                                               + ((all_encode & ((1ULL << (writing_upper_bound - writing_lower_bound + 1)) - 1)) << writing_lower_bound);
         i += (writing_upper_bound - writing_lower_bound + 1);
         all_encode >>= (writing_upper_bound - writing_lower_bound + 1);
     }
-
+    */
 }
 
 /*
@@ -638,8 +703,15 @@ int SemiSortCuckooFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
 
     //get_bucket(pos, store);
 
-    if (store[this -> m] == this -> m) return 1 + 4;
+    if (store[this -> m] == this -> m) 
+        return 1 + 4;
+    else 
+    {
+        store[3] = fp;
+        return 0;
+    }
 
+    /*
     for (int i = 0; i < this -> m; i++) 
     {
         if (store[i] == 0)
@@ -650,15 +722,14 @@ int SemiSortCuckooFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
             //set_bucket(pos, store);
             return 0;
         } 
-        /*
         else
         // optimization for one bit
         if (high_bit(store[i]) == high_bit(fp))
             return 1 + i;
-        */
     }
+    */
 
-    return 1 + 4;
+    //return 1 + 4;
 }
 
 template <typename fp_t, int fp_len>
@@ -667,6 +738,7 @@ int SemiSortCuckooFilter<fp_t, fp_len>::insert(int ele)
     return 1;
 }
 
+/*
 template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::make_balance()
 {
@@ -696,6 +768,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::make_balance()
     }
     deln(success);
 }
+*/
 
 template <typename fp_t, int fp_len>
 int SemiSortCuckooFilter<fp_t, fp_len>::lookup_in_bucket(int pos, fp_t fp)
@@ -727,13 +800,13 @@ bool SemiSortCuckooFilter<fp_t, fp_len>::lookup(int ele)
 
 	fp_t fp = fingerprint(ele);
     int pos1 = this -> position_hash(ele);
-    int pos2 = alternate(pos1, fp);
 
     int ok1 = lookup_in_bucket(pos1, fp);
 
     if (ok1 == 1) return true;
     //if (ok1 == 3) return false;
 
+    int pos2 = alternate(pos1, fp);
     int ok2 = lookup_in_bucket(pos2, fp);
 
     return ok2 == 1;
@@ -754,6 +827,31 @@ double SemiSortCuckooFilter<fp_t, fp_len>::get_full_bucket_factor()
 template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::test_bucket()
 {
+    for (int i = 0; i < this -> n; i++)
+    {
+        fp_t store[8];
+        store[0] = rand() % (1 << fp_len);
+        store[1] = rand() % (1 << fp_len);
+        store[2] = rand() % (1 << fp_len);
+        store[3] = rand() % (1 << fp_len);
+
+        for (int j = 0; j < this -> m; j++)
+            for (int k = j + 1; k < this -> m; k++)
+                if (store[j] == store[k])
+                    store[k] = 0;
+
+        set_bucket(i, store);
+
+        fp_t tmp_store[8];
+        get_bucket(i, tmp_store);
+        for (int j = 0; j < 4; j++)
+        {
+            if (tmp_store[j] != store[j])
+                printf("i = %d, j = %d\n", i, j);
+            assert(tmp_store[j] == store[j]);
+        }
+    }
+
     for (int i = 0; i < this -> n; i++)
     {
         fp_t store[8];
@@ -1196,6 +1294,10 @@ bool MortonFilter<fp_t, fp_len>::lookup(int ele)
 template <typename fp_t, int fp_len>
 double MortonFilter<fp_t, fp_len>::get_load_factor()
 {
+    deln(filled_cell);
+    deln(block_number);
+    deln(block_number * 46);
+
     return filled_cell * 1.0 / (block_number * 368 / 8);
 }
 
@@ -1371,32 +1473,18 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         int fp_hash = HashUtil::MurmurHash32(fp);
 
         //delta : the xor number
-        int delta = this->position_hash(fp_hash);
-
-        /*
-        int ret;
-        if (pos & 1)
-            ret = pos - (delta | 1);
-        else ret = pos + (delta | 1);
-        return this -> position_hash(ret);
-        */
-
-        //if (delta == 0) delta = 1;
+        //int delta = this->position_hash(fp_hash);
+        int delta = fp_hash & (this -> max_2_power - 1);
 
         //bias : the rotation bias
-        int bias = this -> position_hash(HashUtil::MurmurHash32(fp_hash)) | 1;
+        //int bias = this -> position_hash(HashUtil::MurmurHash32(fp_hash)) | 1;
+        //int bias = (HashUtil::MurmurHash32(fp_hash) & (this -> max_2_power - 1)) | 1;
+        //int bias = (delta & (this -> max_2_power - 1)) | 1;
+        int bias = delta;
 
-        // add bias to avoid aggregation
-        if (this -> debug_flag) printf("pos = %d, fp = %d, ", pos, fp);
-
+        pos = pos + bias;
+        if (pos >= this -> n) pos -= this -> n;
         
-        if (pos & 1)
-            pos = pos + bias;
-        else pos = pos - bias;
-        
-        pos = this -> position_hash(pos);
-        //if (pos >= n) pos -= n;
-
         // find the corresponding segment of 'pos'
         // 1. pos ^ n 
         // ----- the highest different bit between position and n will be set to 1
@@ -1415,31 +1503,30 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         // ----- xor (delta % segment_length)
         int t = (delta & (segment_length - 1));
         if (t == 0) t = 1;
-        if (this -> debug_flag) printf("seg_len = %d, t = %d\n", segment_length, t);
 
         int ret = pos ^ t;
 
         // minus bias to avoid aggregation
-        
-        if (ret & 1)
-            ret = ret + bias;
-        else ret = ret - bias;
-        
-        ret = this -> position_hash(ret);
 
+        ret = ret - bias;
+        if (ret < 0) ret += this -> n;
+        
         return ret;
     }
+
     public : 
 
 
     int insert(int ele)
     {
 
+        /*
         if (this -> lookup(ele) == 1)
         {
-            ++this -> filled_cell;
+            //++this -> filled_cell;
             return 0;
         }
+        */
         // If insert success return 0
         // If insert fail return 1
 
@@ -1447,13 +1534,21 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         int cur1 = this -> position_hash(ele);
         int cur2 = alternate(cur1, fp);
 
+        /*
+        if (alternate(cur2, fp) != cur1)
+        {
+            deln(ele);
+            deln(fp);
+            printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
+            printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
+        }
+        */
+
         fp_t store1[8];
         fp_t store2[8];
-        fp_t store3[8];
 
         this -> get_bucket(cur1, store1);
         this -> get_bucket(cur2, store2);
-
 
         if (store1[this -> m] <= store2[this -> m])
         {
@@ -1464,6 +1559,7 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         }
 
         // look foward once
+        /*
         for (int j = 0; j < this -> m; j++)
         {
             int nex = alternate(cur1, store1[j]);
@@ -1493,6 +1589,7 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
                 return 0;
             }
         }
+        */
 
         //randomly choose one bucket's elements to kick
         int rk = rand() % this -> m;
@@ -1500,6 +1597,7 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         //get those item
         int cur;
         fp_t *cur_store;
+        fp_t buck[4][8];
 
         if (rand() & 1)
             cur = cur1, cur_store = store1;
@@ -1511,23 +1609,24 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         this -> set_bucket(cur, cur_store);
 
         int alt = alternate(cur, tmp_fp);
+        this -> get_bucket(alt, store1);
         
         for (int i = 0; i < this -> max_kick_steps; i++)
         {
-            memset(store1, 0, sizeof(store1));
-            this -> get_bucket(alt, store1);
+            //memset(store1, 0, sizeof(store1));
+            //this -> get_bucket(alt, store1);
             if (store1[this -> m] == this -> m)
             {
                 for (int j = 0; j < this -> m; j++)
                 {
                     int nex = alternate(alt, store1[j]);
-                    this -> get_bucket(nex, store2);
-                    if (store2[this -> m] < this -> m)
+                    this -> get_bucket(nex, buck[j]);
+                    if (buck[j][this -> m] < this -> m)
                     {
-                        store2[this -> m - 1] = store1[j];
+                        buck[j][this -> m - 1] = store1[j];
                         store1[j] = tmp_fp;
                         this -> filled_cell++;
-                        this -> set_bucket(nex, store2);
+                        this -> set_bucket(nex, buck[j]);
                         this -> set_bucket(alt, store1);
                         return 0;
                     }
@@ -1540,6 +1639,8 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
 
                 tmp_fp = fp;
                 alt = alternate(alt, tmp_fp);
+                memcpy(store1, buck[rk], sizeof(store1));
+
             } else
             {
                 store1[this -> m - 1] = tmp_fp;
@@ -1718,6 +1819,161 @@ class MortonAddFilter : public MortonFilter<fp_t, fp_len>
 
         return this -> position_hash(ret);
 
+    }
+};
+template <typename fp_t, int fp_len>
+class OffsetFilter : public SemiSortCuckooFilter<fp_t, fp_len>
+{
+    private : 
+    int alternate(int pos, fp_t fp)
+    {
+        // My cuckoo filter -- plus or minus
+		//int n = this->n;
+        //int B;
+        //int bias = (n / (1 << fp_len)) * fp;  // bias -- avoid aggregate
+		//pos = (pos + bias) % n;
+        //int delta = ((HashUtil::MurmurHash32(fp) & (this -> max_2_power - 1)) + 64) | 1;
+        int delta = ((HashUtil::MurmurHash32(fp) & (this -> max_2_power - 1)));
+
+        pos = pos - delta;
+        if (pos < 0)  pos += this -> n;
+
+        pos = this -> n - 1 - pos;
+
+        pos = pos + delta;
+        if (pos >= this -> n) pos -= this -> n;
+
+        return pos;
+
+        /*
+        if (pos & 1)
+            ret = pos - delta;
+        else ret = pos + delta;
+
+        return this -> position_hash(ret);
+        */
+
+    }
+    public : 
+
+
+    int insert(int ele)
+    {
+        if (this -> lookup(ele) == 1)
+        {
+            //++this -> filled_cell;
+            return 0;
+        }
+        // If insert success return 0
+        // If insert fail return 1
+
+        fp_t fp = this -> fingerprint(ele);
+        int cur1 = this -> position_hash(ele);
+        int cur2 = alternate(cur1, fp);
+
+        fp_t store1[8];
+        fp_t store2[8];
+        //fp_t store3[8];
+
+        this -> get_bucket(cur1, store1);
+        this -> get_bucket(cur2, store2);
+
+        if (store1[this -> m] <= store2[this -> m])
+        {
+            if (this -> insert_to_bucket(store1, fp) == 0) {this -> filled_cell++; this -> set_bucket(cur1, store1); return 0;}
+        } else
+        {
+            if (this -> insert_to_bucket(store2, fp) == 0) {this -> filled_cell++; this -> set_bucket(cur2, store2); return 0;}
+        }
+
+        // look foward once
+        /*
+        for (int j = 0; j < this -> m; j++)
+        {
+            int nex = alternate(cur1, store1[j]);
+            this -> get_bucket(nex, store3);
+            if (store3[this -> m] < this -> m)
+            {
+                store3[this -> m - 1] = store1[j];
+                store1[j] = fp;
+                this -> filled_cell++;
+                this -> set_bucket(nex, store3);
+                this -> set_bucket(cur1, store1);
+                return 0;
+            }
+        }
+
+        for (int j = 0; j < this -> m; j++)
+        {
+            int nex = alternate(cur2, store2[j]);
+            this -> get_bucket(nex, store3);
+            if (store3[this -> m] < this -> m)
+            {
+                store3[this -> m - 1] = store2[j];
+                store2[j] = fp;
+                this -> filled_cell++;
+                this -> set_bucket(nex, store3);
+                this -> set_bucket(cur2, store2);
+                return 0;
+            }
+        }
+        */
+
+        //randomly choose one bucket's elements to kick
+        int rk = rand() % this -> m;
+
+        //get those item
+        int cur;
+        fp_t *cur_store;
+
+        if (rand() & 1)
+            cur = cur1, cur_store = store1;
+        else 
+            cur = cur2, cur_store = store2;
+
+        fp_t tmp_fp = cur_store[rk];
+        cur_store[rk] = fp;
+        this -> set_bucket(cur, cur_store);
+
+        int alt = alternate(cur, tmp_fp);
+        
+        for (int i = 0; i < this -> max_kick_steps; i++)
+        {
+            memset(store1, 0, sizeof(store1));
+            this -> get_bucket(alt, store1);
+            if (store1[this -> m] == this -> m)
+            {
+                for (int j = 0; j < this -> m; j++)
+                {
+                    int nex = alternate(alt, store1[j]);
+                    this -> get_bucket(nex, store2);
+                    if (store2[this -> m] < this -> m)
+                    {
+                        store2[this -> m - 1] = store1[j];
+                        store1[j] = tmp_fp;
+                        this -> filled_cell++;
+                        this -> set_bucket(nex, store2);
+                        this -> set_bucket(alt, store1);
+                        return 0;
+                    }
+                }
+
+                rk = rand() % this -> m;
+                fp = store1[rk];
+                store1[rk] = tmp_fp;
+                this -> set_bucket(alt, store1);
+
+                tmp_fp = fp;
+                alt = alternate(alt, tmp_fp);
+            } else
+            {
+                store1[this -> m - 1] = tmp_fp;
+                this -> filled_cell++; 
+                this -> set_bucket(alt, store1);
+                return 0;
+            }
+        }
+        return 1;
     }
 };
 

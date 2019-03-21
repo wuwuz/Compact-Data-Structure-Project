@@ -18,7 +18,7 @@ using namespace std;
 #define ROUNDDOWN(a, b) ((a) - ((a) % (b)))
 #define ROUNDUP(a, b) ROUNDDOWN((a) + (b - 1), b)
 
-inline int find_the_highest_bit(int v)
+inline int find_highest_bit(int v)
 {
 // tricks of bit 
 // from http://graphics.stanford.edu/~seander/bithacks.html
@@ -98,10 +98,14 @@ class BloomFilter : public Filter<fp_t, fp_len>
         int h1 = HashUtil::MurmurHash32(ele);
         int h2 = HashUtil::MurmurHash32(h1);
         int h3 = HashUtil::MurmurHash32(h2);
+        int h4 = HashUtil::MurmurHash32(h3);
+        int h5 = HashUtil::MurmurHash32(h4);
 
         set_item(this->position_hash(h1));
         set_item(this->position_hash(h2));
         set_item(this->position_hash(h3));
+        set_item(this->position_hash(h4));
+        set_item(this->position_hash(h5));
         return 0;
     }
     bool lookup(int ele)
@@ -109,14 +113,17 @@ class BloomFilter : public Filter<fp_t, fp_len>
         int h1 = HashUtil::MurmurHash32(ele);
         int h2 = HashUtil::MurmurHash32(h1);
         int h3 = HashUtil::MurmurHash32(h2);
+        int h4 = HashUtil::MurmurHash32(h3);
+        int h5 = HashUtil::MurmurHash32(h4);
         
-        return get_item(this->position_hash(h1)) && get_item(this->position_hash(h2)) && get_item(this->position_hash(h3));
+        return get_item(this->position_hash(h1)) && get_item(this->position_hash(h2)) && get_item(this->position_hash(h3)) && get_item(this->position_hash(h4)) && get_item(this -> position_hash(h5));
     }
     double get_load_factor(){return 0;}
     double get_full_bucket_factor(){return 0;}
     void debug_test() {}
 };
 
+/*
 template <typename fp_t, int fp_len>
 class CuckooFilter : public Filter<fp_t, fp_len>
 {
@@ -293,6 +300,7 @@ double CuckooFilter<fp_t, fp_len>::get_load_factor()
 {
     return filled_cell * 1.0 / this -> n / this -> m;
 }
+*/
 
 template <typename fp_t, int fp_len>
 class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
@@ -421,7 +429,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 
     //deln(how_many_bit);
 
-    this -> memory_consumption = ROUNDUP(how_many_bit + 64, 8) / 8; // how many bytes !
+    this -> memory_consumption = ROUNDUP(how_many_bit + 64, 8) / 8 + 8; // how many bytes !
 
     max_2_power = 1;
     for (; max_2_power * 2 < _n; ) max_2_power <<= 1;
@@ -509,7 +517,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
         int reading_upper_bound = end_bit_pos & 63;
 
         uint64_t t1 = unit1 >> reading_lower_bound;
-        uint64_t t2 = (unit2 & ((1LL << (reading_upper_bound + 1)) - 1)) << (64 - reading_lower_bound);
+        uint64_t t2 = (unit2 & ((1ULL << (reading_upper_bound + 1)) - 1)) << (64 - reading_lower_bound);
         result = t1 + t2;
     }
 
@@ -603,8 +611,8 @@ void SemiSortCuckooFilter<fp_t, fp_len>::set_bucket(int pos, fp_t *store)
 
     low_bit = (store[3] & ((1 << (fp_len - 4)) - 1)) 
             + ((store[2] & ((1 << (fp_len - 4)) - 1)) << (1 * (fp_len - 4)))
-            + ((store[1] & ((1 << (fp_len - 4)) - 1)) << (2 * (fp_len - 4)))
-            + ((store[0] & ((1 << (fp_len - 4)) - 1)) << (3 * (fp_len - 4)));
+            + (((uint64_t)store[1] & ((1 << (fp_len - 4)) - 1)) << (2 * (fp_len - 4)))
+            + (((uint64_t)store[0] & ((1 << (fp_len - 4)) - 1)) << (3 * (fp_len - 4)));
 
     high_bit = ((store[3] >> (fp_len - 4)) & ((1 << 4) - 1))
              + (((store[2] >> (fp_len - 4)) & ((1 << 4) - 1)) << 4)
@@ -829,6 +837,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::test_bucket()
 {
     for (int i = 0; i < this -> n; i++)
     {
+        deln(i);
         fp_t store[8];
         store[0] = rand() % (1 << fp_len);
         store[1] = rand() % (1 << fp_len);
@@ -1494,7 +1503,7 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         //
         // 3. curlen = 1 << highest_bit
         // ----- get the segment length
-        int segment_length = 1 << find_the_highest_bit(pos ^ n);
+        int segment_length = 1 << find_highest_bit(pos ^ n);
 
         // get the alternate position
         // 1. delta & (segment_length - 1)

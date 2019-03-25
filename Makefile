@@ -1,4 +1,4 @@
-CFLAGS = -g -Wall -std=c++0x #-Ofast
+CFLAGS = -pg -g -Wall -std=c++14 -Ofast
 
 all: eval eval_fpr eval_load eval_bucket eval_tput
 

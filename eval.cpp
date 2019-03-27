@@ -7,7 +7,6 @@
 #include <ratio>
 #include <chrono>
 #include <cuckoofilter/cuckoofilter.h>
-#include <standardfilter/cuckoofilter.h>
 
 #define debug(a) cerr << #a << " = " << a << ' '
 #define deln(a)  cerr << #a << " = " << a << endl
@@ -53,19 +52,26 @@ void evaluate(Filter<fp_t, fp_len> &filter,
 
     printf("negative lookup\n");
 
-	unordered_set<int> S(insKey.begin(), insKey.end());
+	//unordered_set<int> S(insKey.begin(), insKey.end());
 
-	for (int key : lupKey)
-		if (filter.lookup(key) == true && !S.count(key)) // false positive
-			++false_positive;
-
-    printf("negative lookup finish\n");
+    //printf("cannot generate a set");
 
 	int n = insKey.size(), q = lupKey.size(), m = filter.n, b = filter.m;
 
+	for (int i = 0; i < q; i++)
+    {
+        int key = lupKey[i];
+		//if (filter.lookup(key) == true && !S.count(key)) // false positive
+        if (filter.lookup(key))
+			++false_positive;
+    }
+
+    printf("negative lookup finish\n");
+
+
     if (verbose)
     {
-        printf("testing %s: n = %d, q = %d, m = %d, b = %d memory = %d bytes\n",
+        printf("testing %s: n = %d, q = %d, m = %d, b = %d memory = %lu bytes\n",
                filter_name, n, q, m, b, filter.memory_consumption);
         printf("fail insertion rate = %.3f%%\n", fail_insert * 100.0 / n);
         printf("false negative rate = %.3f%%\n", false_negative * 100.0 / n);
@@ -133,7 +139,7 @@ void test_memory_usage()
         m += m & 1;
         bf.init(m, b, maxSteps);
 
-        fprintf(out, "%d, %d, %d, %d, %d, %d\n", n, sscf.memory_consumption, mf.memory_consumption, vf.memory_consumption, vf2.memory_consumption, bf.memory_consumption);
+        fprintf(out, "%lu, %lu, %lu, %lu, %lu, %lu\n", n, sscf.memory_consumption, mf.memory_consumption, vf.memory_consumption, vf2.memory_consumption, bf.memory_consumption);
     }
 
     fclose(out);
@@ -155,13 +161,13 @@ void test_all()
 
     VacuumFilter<uint16_t, 13> sb;
     sb.init(100, 4, 200);
-    sb.test_bucket();
+    //sb.test_bucket();
 
     printf("pass\n");
     fprintf(out, "key size, ");
 
-    const int test_time = 11;
-    const int key[test_time] = {(1 << 16) + 1, 10000, 100000, 200000, 300000, 1000000, 2000000, 3000000, 4000000, 5000000, 6000000};
+    const int test_time = 12;
+    const int key[test_time] = {(100000000), 10000, 100000, 200000, 300000, 1000000, 2000000, 3000000, 4000000, 5000000, 6000000, int((1 << 20) * 0.94)};
     const string name[5] = {"Vacuum", "Standard", "Morton", "Bloom", "Offset"};
     const string metric[6] = {"memory", "fail insert", "false negative", "false positive", "load factor", "bits per item"};
 
@@ -175,10 +181,10 @@ void test_all()
                 fprintf(out, "%s\n", tmp.c_str());
         }
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 1; i++)
     {
         int n = key[i];
-        int q = 1000000;
+        int q = 100000;
         int maxSteps = 400;
         int b = 4;
         int seed = 1;
@@ -195,17 +201,20 @@ void test_all()
 
         vector<double> res[5];
 
-        VacuumFilter<uint16_t, 11> vf;
-        m = (int) (n / b / 0.96 + 1);
+        VacuumFilter<uint16_t, 12> vf;
+        m = (int) (n / b / 0.967 + 1);
         m += m & 1;
         vf.init(m, b, maxSteps);
         evaluate(vf, name[0].c_str(), insKey, lupKey, res[0]);
+
+        printf("vf finish\n");
 
         StandardCuckooFilter<uint16_t, 11> cf;
         m = 1 << (int)(ceil(log2(n / b / 0.95)));
         cf.init(m, b, maxSteps);
         evaluate(cf, name[1].c_str(),  insKey, lupKey, res[1]);
 
+        printf("cf finish\n");
 
         MortonAddFilter<uint8_t, 8> mf;
         m = (int) (n / b / 0.95 + 1);
@@ -213,17 +222,23 @@ void test_all()
         mf.init(m, b, maxSteps);
         evaluate(mf, name[2].c_str(),  insKey, lupKey, res[2]);
 
+        printf("mf finish\n");
+
         BloomFilter<uint16_t, 11> bf;
         m = (int) (n / b / 0.95 + 1);
         m += m & 1;
         bf.init(m, b, maxSteps);
         evaluate(bf, name[3].c_str(),  insKey, lupKey, res[3]);
 
+        printf("bf finish\n");
+
         OffsetFilter<uint16_t, 11> of;
         m = (int) (n / b / 0.96 + 1);
         m += m & 1;
         of.init(m, b, maxSteps);
         evaluate(of, name[4].c_str(), insKey, lupKey, res[4]);
+
+        printf("of finish\n");
 
         fprintf(out, "%d, ", n);
 
@@ -350,9 +365,9 @@ void test_throughput()
     FILE *out = fopen("throughput.csv", "w");
     assert(out != NULL);
 
-    int rept = 10;
-    int n = (1 << 24) * 0.94;
-    int q = 10000000;
+    int rept = 1;
+    int n = (1 << 27) * 0.94;
+    int q = 10000;
     int maxSteps = 400;
     int b = 4;
     int seed = 1;
@@ -362,6 +377,7 @@ void test_throughput()
     double mop[20], mop1[20];
     int cnt[20], cnt1[20];
 
+    printf("vacuum insert\n");
     fprintf(out, "occupancy, vacuum insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -386,10 +402,14 @@ void test_throughput()
 
         for (double r = 0.05; r <= 0.96; r += 0.05, ++j)
         {
+            //printf("%.2f\n", r);
             int lim = int(n * r);
             for (; i < lim; i++) 
+            {
+                //printf("%d\n", i);
                 if (vf.insert(insKey[i]) == 0)
                     ++ins_cnt;
+            }
 
             auto end = chrono::steady_clock::now();
             double cost = time_cost(start, end);
@@ -400,6 +420,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("bf insert\n");
     fprintf(out, "occupancy, bloom insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -438,6 +459,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("fb-vacuum-ss insert\n");
     fprintf(out, "occupancy, fb-vacuum-ss insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -472,6 +494,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("fb-std-ss insert\n");
     fprintf(out, "occupancy, fb-standard-ss insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -506,6 +529,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("fb-vacuum insert\n");
     fprintf(out, "occupancy, fb-vacuum insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -540,6 +564,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("fb-std insert\n");
     fprintf(out, "occupancy, fb-standard insert throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
@@ -574,6 +599,7 @@ void test_throughput()
     }
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 
+    printf("vf lookup\n");
     fprintf(out, "occupancy, vacuum negative lookup throughput(MOPS), vacuum positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -634,6 +660,7 @@ void test_throughput()
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
 
+    printf("bloom lookup\n");
     fprintf(out, "occupancy, bloom negative lookup throughput(MOPS), bloom positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -697,6 +724,7 @@ void test_throughput()
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
 
+    printf("fb-vacuum-ss lookup\n");
     fprintf(out, "occupancy, fb-vacuum-ss negative lookup throughput(MOPS), fb-vacuum-ss positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -758,6 +786,7 @@ void test_throughput()
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
 
+    printf("fb-std-ss lookup\n");
     fprintf(out, "occupancy, fb-std-ss negative lookup throughput(MOPS), fb-std-ss positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -819,6 +848,7 @@ void test_throughput()
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
 
+    printf("fb-vacuum lookup\n");
     fprintf(out, "occupancy, fb-vacuum negative lookup throughput(MOPS), fb-vacuum positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -880,6 +910,7 @@ void test_throughput()
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
 
+    printf("fb-std lookup\n");
     fprintf(out, "occupancy, fb-std negative lookup throughput(MOPS), fb-std positive lookup throughput\n");
     for (int t = 0; t < rept; t++)
     {
@@ -940,432 +971,255 @@ void test_throughput()
 
     for (int j = 0; j < 19; j++)
         fprintf(out, "%.2f, %.5f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j], mop1[j] / cnt1[j]);
+
     /*
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, bloom insert throughput(MOPS)\n");
+    printf("vf del\n");
+    fprintf(out, "occupancy, vacuum delete throughput(MOPS)\n");
     for (int t = 0; t < rept; t++)
     {
-        BloomFilter<uint16_t, 13> bf;
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        VacuumFilter<uint16_t, 13> vf;
         m = n / b;
-        bf.init(m, b, maxSteps);
+        vf.init(m, b, maxSteps);
 
-        auto start = chrono::steady_clock::now();
-
-        int i = 0;
-        int ins_cnt = 0;
-        int j = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05, j++)
-        {
-            //printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (bf.insert(insKey[i]) == 0)
-                    ++ins_cnt;
-
-            auto end = chrono::steady_clock::now();
-            double cost = time_cost(start, end);
-            mop[j] += double(ins_cnt) / 1000000.0 / cost;
-            cnt[j] += 1;
-            //fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
-        }
-    }
-
-    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, bloom negative lookup throughput(MOPS), bloom positive throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        BloomFilter<uint16_t, 13> bf1;
-        m = n / b;
-        bf1.init(m, b, maxSteps);
-
+        for (int i = 0; i < 0.95 * n; i++) vf.insert(insKey[i]);
 
         int i = 0;
-        int ins_cnt = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05)
+        int j = 18;
+        int del_cnt = 0;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
         {
-            printf("%.2f\n", r);
             int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (bf1.insert(insKey[i]) == 0)
-                    ++ins_cnt;
-
             auto start = chrono::steady_clock::now();
-
-            int lookup_number = 0;
-            for (int key : lupKey)
-            {
-                if (bf1.lookup(key) == 0)
-                    lookup_number++;
-            }
-            auto end = chrono::steady_clock::now();
-
-            deln(lookup_number);
-            double cost = time_cost(start, end);
-            fprintf(out, "%d, %.2f, %.5f, %.5f, ", q, r, cost, double(q) / 1000000.0 / cost);
-
-            start = chrono::steady_clock::now();
-            int t = min(10000000, lim);
-            int f = 0;
-            for (int i = 0; i < t; i++)
-            {
-                f += bf1.lookup(insKey[i]);
-            }
-            end = chrono::steady_clock::now();
-
-            cost = time_cost(start, end);
-            printf("%d\n", f);
-            fprintf(out, "%.5f, %.5f\n", cost, double(t) / 1000000.0 / cost);
-        }
-    }
-
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, fb-vacuum-ss insert throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        
-        cuckoofilter::VacuumFilter<size_t, 13, cuckoofilter::PackedTable > cf(n);
-
-        auto start = chrono::steady_clock::now();
-
-        int i = 0;
-        int ins_cnt = 0;
-        int j = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05, j++)
-        {
-            //printf("%.2f\n", r);
-            int lim = int(n * r);
             for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == cuckoofilter::Ok)
-                    ++ins_cnt;
+                if (vf.del(insKey[i]) == 1)
+                    ++del_cnt;
 
             auto end = chrono::steady_clock::now();
             double cost = time_cost(start, end);
-            mop[j] += double(ins_cnt) / 1000000.0 / cost;
-            cnt[j] += 1;
-            //fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
-        }
-    }
-
-    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, fb-vacuum-ss negative lookup throughput(MOPS), fb-vacuum-ss positive throughput(MOPS)\n");
-
-    for (int t = 0; t < rept; t++)
-    {
-        cuckoofilter::VacuumFilter<size_t, 13, cuckoofilter::PackedTable > cf(n);
-
-
-        int i = 0;
-        int ins_cnt = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05)
-        {
-            printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == 0)
-                    ++ins_cnt;
-
-            auto start = chrono::steady_clock::now();
-
-            int lookup_number = 0;
-            for (int key : lupKey)
-            {
-                if (cf.Contain(key) != cuckoofilter::Ok)
-                    lookup_number++;
-            }
-            auto end = chrono::steady_clock::now();
-
-            deln(lookup_number);
-            double cost = time_cost(start, end);
-            fprintf(out, "%d, %.2f, %.5f, %.5f, ", q, r, cost, double(q) / 1000000.0 / cost);
-
-            start = chrono::steady_clock::now();
-            int t = min(10000000, lim);
-            int f = 0;
-            for (int i = 0; i < t; i++)
-            {
-                f += cf.Contain(insKey[i]);
-            }
-            end = chrono::steady_clock::now();
-
-            cost = time_cost(start, end);
-            printf("%d\n", f);
-            fprintf(out, "%.5f, %.5f\n", cost, double(t) / 1000000.0 / cost);
-        }
-    }
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "key number, occupancy, fb-vacuum insert throughput(MOPS)\n");
-
-    for (int t = 0; t < rept; t++)
-    {
-        
-        cuckoofilter::VacuumFilter<size_t, 12> cf(n);
-
-        auto start = chrono::steady_clock::now();
-
-        int i = 0;
-        int ins_cnt = 0;
-        int j = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05, j++)
-        {
-            //printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == cuckoofilter::Ok)
-                    ++ins_cnt;
-
-            auto end = chrono::steady_clock::now();
-            double cost = time_cost(start, end);
-
-            mop[j] += double(ins_cnt) / 1000000.0 / cost;
-            cnt[j] += 1;
-            //fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
-        }
-    }
-
-    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-    fprintf(out, "occupancy, fb-vacuum negative lookup throughput(MOPS), fb-vacuum positive throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        cuckoofilter::VacuumFilter<size_t, 12> cf(n);
-
-
-        int i = 0;
-        int ins_cnt = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05)
-        {
-            printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == 0)
-                    ++ins_cnt;
-
-            auto start = chrono::steady_clock::now();
-
-            int lookup_number = 0;
-            for (int key : lupKey)
-            {
-                if (cf.Contain(key) != cuckoofilter::Ok)
-                    lookup_number++;
-            }
-            auto end = chrono::steady_clock::now();
-
-            deln(lookup_number);
-            double cost = time_cost(start, end);
-            fprintf(out, "%d, %.2f, %.5f, %.5f, ", q, r, cost, double(q) / 1000000.0 / cost);
-
-            start = chrono::steady_clock::now();
-            int t = min(10000000, lim);
-            int f = 0;
-            for (int i = 0; i < t; i++)
-            {
-                f += cf.Contain(insKey[i]);
-            }
-            end = chrono::steady_clock::now();
-
-            cost = time_cost(start, end);
-            printf("%d\n", f);
-            fprintf(out, "%.5f, %.5f\n", cost, double(t) / 1000000.0 / cost);
-        }
-    }
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-    fprintf(out, "occupancy, fb-standard-ss insert throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        
-        cuckoofilter::CuckooFilter<size_t, 13, cuckoofilter::PackedTable > cf(n);
-
-        auto start = chrono::steady_clock::now();
-
-        int i = 0;
-        int ins_cnt = 0;
-        int j = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05, j++)
-        {
-            //printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == cuckoofilter::Ok)
-                    ++ins_cnt;
-
-            auto end = chrono::steady_clock::now();
-            double cost = time_cost(start, end);
-            //fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
-            mop[j] += double(ins_cnt) / 1000000.0 / cost;
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
             cnt[j] += 1;
         }
     }
-
     for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, fb-standard-ss negative lookup throughput(MOPS), fb-standard-ss positive throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        cuckoofilter::CuckooFilter<size_t, 13, cuckoofilter::PackedTable > cf(n);
-
-
-        int i = 0;
-        int ins_cnt = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05)
-        {
-            printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == 0)
-                    ++ins_cnt;
-
-            auto start = chrono::steady_clock::now();
-
-            int lookup_number = 0;
-            for (int key : lupKey)
-            {
-                if (cf.Contain(key) != cuckoofilter::Ok)
-                    lookup_number++;
-            }
-            auto end = chrono::steady_clock::now();
-
-            deln(lookup_number);
-            double cost = time_cost(start, end);
-            fprintf(out, "%d, %.2f, %.5f, %.5f, ", q, r, cost, double(q) / 1000000.0 / cost);
-
-            start = chrono::steady_clock::now();
-            int t = min(10000000, lim);
-            int f = 0;
-            for (int i = 0; i < t; i++)
-            {
-                f += cf.Contain(insKey[i]);
-            }
-            end = chrono::steady_clock::now();
-
-            cost = time_cost(start, end);
-            printf("%d\n", f);
-            fprintf(out, "%.5f, %.5f\n", cost, double(t) / 1000000.0 / cost);
-        }
-    }
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, fb-standard insert throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        
-        cuckoofilter::CuckooFilter<size_t, 12> cf(n);
-
-        auto start = chrono::steady_clock::now();
-
-        int i = 0;
-        int ins_cnt = 0;
-        int j = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05, j++)
-        {
-            //printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == cuckoofilter::Ok)
-                    ++ins_cnt;
-
-            auto end = chrono::steady_clock::now();
-            double cost = time_cost(start, end);
-            //fprintf(out, "%d, %.2f, %.5f, %.5f\n", lim, r, cost, double(ins_cnt) / 1000000.0 / cost);
-            mop[j] += double(ins_cnt) / 1000000.0 / cost;
-            cnt[j] += 1;
-        }
-    }
-
-    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
-
-    memcle(mop);
-    memcle(cnt);
-    memcle(mop1);
-    memcle(cnt1);
-
-    fprintf(out, "occupancy, fb-standard negative lookup throughput(MOPS), fb-standard positive throughput(MOPS)\n");
-    for (int t = 0; t < rept; t++)
-    {
-        cuckoofilter::CuckooFilter<size_t, 12> cf(n);
-
-
-        int i = 0;
-        int ins_cnt = 0;
-        for (double r = 0.05; r <= 0.96; r += 0.05)
-        {
-            printf("%.2f\n", r);
-            int lim = int(n * r);
-            for (; i < lim; i++) 
-                if (cf.Add(insKey[i]) == 0)
-                    ++ins_cnt;
-
-            auto start = chrono::steady_clock::now();
-
-            int lookup_number = 0;
-            for (int key : lupKey)
-            {
-                if (cf.Contain(key) != cuckoofilter::Ok)
-                    lookup_number++;
-            }
-            auto end = chrono::steady_clock::now();
-
-            deln(lookup_number);
-            double cost = time_cost(start, end);
-            fprintf(out, "%d, %.2f, %.5f, %.5f, ", q, r, cost, double(q) / 1000000.0 / cost);
-
-            start = chrono::steady_clock::now();
-            int t = min(10000000, lim);
-            int f = 0;
-            for (int i = 0; i < t; i++)
-            {
-                f += cf.Contain(insKey[i]);
-            }
-            end = chrono::steady_clock::now();
-
-            cost = time_cost(start, end);
-            printf("%d\n", f);
-            fprintf(out, "%.5f, %.5f\n", cost, double(t) / 1000000.0 / cost);
-        }
-    }
     */
+}
+
+void test_del()
+{
+    FILE *out = fopen("throughput_del.csv", "w");
+    assert(out != NULL);
+
+    int rept = 10;
+    int n = (1 << 24) * 0.94;
+    int q = 10000000;
+    int maxSteps = 400;
+    int b = 4;
+    int seed = 1;
+    int m;
+
+    mt19937 rd(seed);
+    double mop[20], mop1[20];
+    int cnt[20], cnt1[20];
+    
+    vector<int> insKey;
+    vector<int> lupKey;
+    
+    fprintf(out, "occupancy, vacuum delete throughput(MOPS)\n");
+    for (int t = 0; t < rept; t++)
+    {
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        VacuumFilter<uint16_t, 13> vf;
+        m = n / b;
+        vf.init(m, b, maxSteps);
+
+        for (int i = 0; i < 0.95 * n; i++) vf.insert(insKey[i]);
+
+        int i = 0;
+        int j = 18;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
+        {
+            int del_cnt = 0;
+            int lim = int(n * r);
+            auto start = chrono::steady_clock::now();
+            for (; i < lim; i++) 
+            {
+                vf.del(insKey[i]);
+                ++del_cnt;
+            }
+
+            auto end = chrono::steady_clock::now();
+            double cost = time_cost(start, end);
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
+            cnt[j] += 1;
+        }
+    }
+
+    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
+
+    fprintf(out, "occupancy, fb-vacuum-ss delete throughput(MOPS)\n");
+    for (int t = 0; t < rept; t++)
+    {
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        cuckoofilter::VacuumFilter<size_t, 13, cuckoofilter::PackedTable> vf(n);
+
+        for (int i = 0; i < 0.95 * n; i++) vf.Add(insKey[i]);
+
+        int i = 0;
+        int j = 18;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
+        {
+            int del_cnt = 0;
+            int lim = int(n * r);
+            auto start = chrono::steady_clock::now();
+            for (; i < lim; i++) 
+            {
+                vf.Delete(insKey[i]);
+                ++del_cnt;
+            }
+            auto end = chrono::steady_clock::now();
+            double cost = time_cost(start, end);
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
+            cnt[j] += 1;
+        }
+    }
+
+    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
+
+    fprintf(out, "occupancy, fb-std-ss delete throughput(MOPS)\n");
+    for (int t = 0; t < rept; t++)
+    {
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        cuckoofilter::CuckooFilter<size_t, 13, cuckoofilter::PackedTable> vf(n);
+
+        for (int i = 0; i < 0.95 * n; i++) vf.Add(insKey[i]);
+
+        int i = 0;
+        int j = 18;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
+        {
+            int del_cnt = 0;
+            int lim = int(n * r);
+            auto start = chrono::steady_clock::now();
+            for (; i < lim; i++) 
+            {
+                vf.Delete(insKey[i]);
+                ++del_cnt;
+            }
+            auto end = chrono::steady_clock::now();
+            double cost = time_cost(start, end);
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
+            cnt[j] += 1;
+        }
+    }
+
+    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
+
+    fprintf(out, "occupancy, fb-vacuum delete throughput(MOPS)\n");
+    for (int t = 0; t < rept; t++)
+    {
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        cuckoofilter::VacuumFilter<size_t, 12> vf(n);
+
+        for (int i = 0; i < 0.95 * n; i++) vf.Add(insKey[i]);
+
+        int i = 0;
+        int j = 18;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
+        {
+            int del_cnt = 0;
+            int lim = int(n * r);
+            auto start = chrono::steady_clock::now();
+            for (; i < lim; i++) 
+            {
+                vf.Delete(insKey[i]);
+                ++del_cnt;
+            }
+            auto end = chrono::steady_clock::now();
+            double cost = time_cost(start, end);
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
+            cnt[j] += 1;
+        }
+    }
+
+    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
+
+    fprintf(out, "occupancy, fb-std delete throughput(MOPS)\n");
+    for (int t = 0; t < rept; t++)
+    {
+        vector<int> insKey;
+        vector<int> lupKey;
+        for (int i = 1; i <= n; ++i) insKey.push_back(rd());
+        for (int i = 1; i <= q; ++i) lupKey.push_back(rd());
+        memcle(mop);
+        memcle(cnt);
+        memcle(mop1);
+        memcle(cnt1);
+
+        cuckoofilter::CuckooFilter<size_t, 12> vf(n);
+
+        for (int i = 0; i < 0.95 * n; i++) vf.Add(insKey[i]);
+
+        int i = 0;
+        int j = 18;
+        for (double r = 0.05; r <= 0.96; r += 0.05, --j)
+        {
+            int del_cnt = 0;
+            int lim = int(n * r);
+            auto start = chrono::steady_clock::now();
+            for (; i < lim; i++) 
+            {
+                vf.Delete(insKey[i]);
+                ++del_cnt;
+            }
+            auto end = chrono::steady_clock::now();
+            double cost = time_cost(start, end);
+            mop[j] += double(del_cnt) / 1000000.0 / cost;
+            cnt[j] += 1;
+        }
+    }
+
+    for (int j = 0; j < 19; j++) fprintf(out, "%.2f, %.5f\n", (j + 1) * 0.05, mop[j] / cnt[j]);
 }
 
 const int maxSteps = 250; // threshold for kick steps
@@ -1439,6 +1293,7 @@ int main(int argc, char **argv)
     if (test_name == "memory") test_memory_usage();
     if (test_name == "load") test_load_factor();
     if (test_name == "speed") test_throughput();
+    if (test_name == "del") test_del();
 
     /*
 	StandardCuckooFilter<uint8_t, 8> standard_cuckoo_filter;

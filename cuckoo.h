@@ -45,21 +45,22 @@ class Filter
 {
     public : 
 
-    int n; // number of buckets
+    uint64_t n; // number of buckets
     int m; // number of slots per bucket
-    int memory_consumption;
+    uint64_t memory_consumption;
     virtual void init(int _n, int _m, int _max_kick_steps) = 0;
 	virtual void clear() = 0;
     virtual int insert(int ele) = 0;
     virtual bool lookup(int ele) = 0;
-    int position_hash(int ele); // hash to range [0, n - 1]
+    virtual bool del(int ele) = 0;
+    uint64_t position_hash(uint64_t ele); // hash to range [0, n - 1]
     virtual double get_load_factor() {return 0;}
     virtual double get_full_bucket_factor() {return 0;}
     virtual void debug_test() {}
 };
 
 template <typename fp_t, int fp_len>
-int Filter<fp_t, fp_len>::position_hash(int ele)
+uint64_t Filter<fp_t, fp_len>::position_hash(uint64_t ele)
 {
     return (ele % n + n) % n;
 }
@@ -76,8 +77,9 @@ class BloomFilter : public Filter<fp_t, fp_len>
     void init(int _n, int _m, int _max_kick_steps = 0)
     {
         shift = 3;
+        _n += _n & 1;
 
-        this -> n = _n * _m * fp_len;
+        this -> n = (uint64_t)_n * _m * fp_len;
         this -> memory_consumption = ROUNDUP(_n * _m * fp_len + 64, 8) / 8;
         T = (char *)calloc(this -> memory_consumption, sizeof(char)); // how many bytes
     }
@@ -85,11 +87,11 @@ class BloomFilter : public Filter<fp_t, fp_len>
     {
 	    memset(T, 0, sizeof(char) * this -> memory_consumption);
     }
-    void set_item(int pos)
+    void set_item(uint64_t pos)
     {
         T[pos >> shift] |= (1 << (pos & ((1 << shift) - 1)));
     }
-    bool get_item(int pos)
+    bool get_item(uint64_t pos)
     {
         return (T[pos >> shift] & (1 << (pos & ((1 << shift) - 1)))) > 0;
     }
@@ -121,6 +123,7 @@ class BloomFilter : public Filter<fp_t, fp_len>
     double get_load_factor(){return 0;}
     double get_full_bucket_factor(){return 0;}
     void debug_test() {}
+    bool del(int ele) {return 0;}
 };
 
 /*
@@ -312,6 +315,7 @@ class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
 	void clear();
     virtual int insert(int ele);
     bool lookup(int ele);
+    virtual bool del(int ele);
     double get_load_factor();
     double get_full_bucket_factor();
 
@@ -341,6 +345,7 @@ class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
     virtual int alternate(int pos, fp_t fp) = 0; // get alternate position
     virtual int insert_to_bucket(fp_t *store, fp_t fp); // insert one fingerprint to bucket [pos] 
     virtual int lookup_in_bucket(int pos, fp_t fp); // lookup one fingerprint in  bucket [pos]
+    virtual int del_in_bucket(int pos, fp_t fp); // lookup one fingerprint in  bucket [pos]
     void debug_test()
     {
         //debug_flag = true;
@@ -419,13 +424,14 @@ class SemiSortCuckooFilter : public Filter<fp_t, fp_len>
 template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 {
+    _n += _n & 1;
     this -> n = _n;
     this -> m = _m;
     this -> max_kick_steps = _step;
     this -> filled_cell = 0;
     this -> full_bucket = 0;
 
-    int how_many_bit = this -> n * this -> m * (fp_len - 1);
+    uint64_t how_many_bit = (uint64_t)this -> n * this -> m * (fp_len - 1);
 
     //deln(how_many_bit);
 
@@ -495,8 +501,8 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
     // 1. read the endcoded bits from memory
 
     int bucket_length = (fp_len - 1) * 4;
-    int start_bit_pos = pos * bucket_length;
-    int end_bit_pos = start_bit_pos + bucket_length - 1;
+    uint64_t start_bit_pos = (uint64_t)pos * bucket_length;
+    uint64_t end_bit_pos = start_bit_pos + bucket_length - 1;
     uint64_t result = 0;
 
     if (ROUNDDOWN(start_bit_pos, 64) == ROUNDDOWN(end_bit_pos, 64))
@@ -510,6 +516,7 @@ void SemiSortCuckooFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
         result = ((uint64_t)unit & ((-1ULL) >> (63 - reading_upper_bound))) >> reading_lower_bound;
     } else
     {
+        //printf("%lu\n", ROUNDDOWN(start_bit_pos, 64) / 64);
         uint64_t unit1 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64];
         uint64_t unit2 = ((uint64_t *)T)[ROUNDDOWN(start_bit_pos, 64) / 64 + 1];
 
@@ -634,8 +641,8 @@ void SemiSortCuckooFilter<fp_t, fp_len>::set_bucket(int pos, fp_t *store)
     uint64_t all_encode = (high_encode << (4 * (fp_len - 4))) + low_bit;
 
     int bucket_length = (fp_len - 1) * 4;
-    int start_bit_pos = pos * bucket_length;
-    int end_bit_pos = start_bit_pos + bucket_length - 1;
+    uint64_t start_bit_pos = (uint64_t)pos * bucket_length;
+    uint64_t end_bit_pos = start_bit_pos + bucket_length - 1;
 
     if (ROUNDDOWN(start_bit_pos, 64) == ROUNDDOWN(end_bit_pos, 64))
     {
@@ -821,6 +828,46 @@ bool SemiSortCuckooFilter<fp_t, fp_len>::lookup(int ele)
 }
 
 template <typename fp_t, int fp_len>
+int SemiSortCuckooFilter<fp_t, fp_len>::del_in_bucket(int pos, fp_t fp)
+{
+    fp_t store[8];
+    get_bucket(pos, store);
+
+    for (int i = 0; i < this -> m; i++)
+    {
+        fp_t t = store[i];
+        if (t == fp) 
+        {
+            store[i] = 0;
+            --this -> filled_cell;
+            set_bucket(pos, store);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+template <typename fp_t, int fp_len>
+bool SemiSortCuckooFilter<fp_t, fp_len>::del(int ele)
+{
+
+    // If ele is positive, return true
+    // negative -- return false
+
+	fp_t fp = fingerprint(ele);
+    int pos1 = this -> position_hash(ele);
+
+    int ok1 = del_in_bucket(pos1, fp);
+
+    if (ok1 == 1) return true;
+    //if (ok1 == 3) return false;
+
+    int pos2 = alternate(pos1, fp);
+    int ok2 = del_in_bucket(pos2, fp);
+
+    return ok2 == 1;
+}
+template <typename fp_t, int fp_len>
 double SemiSortCuckooFilter<fp_t, fp_len>::get_load_factor()
 {
     return filled_cell * 1.0 / this -> n / this -> m;
@@ -897,6 +944,7 @@ class MortonFilter : public Filter<fp_t, fp_len>
 	void clear();
     int insert(int ele);
     bool lookup(int ele);
+    bool del(int ele) {}
     double get_load_factor();
 
     uint8_t *T;
@@ -934,10 +982,10 @@ void MortonFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 
     //deln(_n);
     //deln(_m);
-    this -> block_number = ROUNDUP(_n * _m, 46) / 46;
+    this -> block_number = ROUNDUP((uint64_t)_n * _m, 46) / 46;
     //deln(this -> block_number * 46);
 
-    int how_many_bit = this -> block_number * 512;
+    uint64_t how_many_bit = (uint64_t)this -> block_number * 512;
     //deln(how_many_bit);
 
     // here, we use memory_consumption as standard

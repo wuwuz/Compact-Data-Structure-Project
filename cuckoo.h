@@ -18,6 +18,16 @@ using namespace std;
 #define ROUNDDOWN(a, b) ((a) - ((a) % (b)))
 #define ROUNDUP(a, b) ROUNDDOWN((a) + (b - 1), b)
 
+unsigned long lower_power_of_two(unsigned long x)
+{
+    x = x | (x >> 1);
+    x = x | (x >> 2);
+    x = x | (x >> 4);
+    x = x | (x >> 8);
+    x = x | (x >> 16);
+    return x - (x >> 1);
+}
+
 inline int find_highest_bit(int v)
 {
 // tricks of bit 
@@ -45,7 +55,7 @@ class Filter
 {
     public : 
 
-    uint64_t n; // number of buckets
+    long long n; // number of buckets
     int m; // number of slots per bucket
     uint64_t memory_consumption;
     virtual void init(int _n, int _m, int _max_kick_steps) = 0;
@@ -53,14 +63,14 @@ class Filter
     virtual int insert(int ele) = 0;
     virtual bool lookup(int ele) = 0;
     virtual bool del(int ele) = 0;
-    uint64_t position_hash(uint64_t ele); // hash to range [0, n - 1]
+    uint64_t position_hash(long long ele); // hash to range [0, n - 1]
     virtual double get_load_factor() {return 0;}
     virtual double get_full_bucket_factor() {return 0;}
     virtual void debug_test() {}
 };
 
 template <typename fp_t, int fp_len>
-uint64_t Filter<fp_t, fp_len>::position_hash(uint64_t ele)
+uint64_t Filter<fp_t, fp_len>::position_hash(long long ele)
 {
     return (ele % n + n) % n;
 }
@@ -71,16 +81,23 @@ class BloomFilter : public Filter<fp_t, fp_len>
     public : 
 
     int shift;
+    int a[16];
     char *T;
 	~BloomFilter() { free(T); }
 
     void init(int _n, int _m, int _max_kick_steps = 0)
     {
+        mt19937 rd(123);
+        for (int i = 0; i < 16; i++) 
+        {
+            a[i] = rd();
+        }
+
         shift = 3;
         _n += _n & 1;
 
         this -> n = (uint64_t)_n * _m * fp_len;
-        this -> memory_consumption = ROUNDUP(_n * _m * fp_len + 64, 8) / 8;
+        this -> memory_consumption = ROUNDUP((long long)_n * _m * fp_len + 64, 8) / 8;
         T = (char *)calloc(this -> memory_consumption, sizeof(char)); // how many bytes
     }
     void clear()
@@ -97,28 +114,37 @@ class BloomFilter : public Filter<fp_t, fp_len>
     }
     int insert(int ele)
     {
-        int h1 = HashUtil::MurmurHash32(ele);
-        int h2 = HashUtil::MurmurHash32(h1);
-        int h3 = HashUtil::MurmurHash32(h2);
-        int h4 = HashUtil::MurmurHash32(h3);
-        int h5 = HashUtil::MurmurHash32(h4);
+        int h1 = HashUtil::MurmurHash32(ele ^ a[1]);
+        int h2 = HashUtil::MurmurHash32(ele ^ a[2]);
+        int h3 = HashUtil::MurmurHash32(ele ^ a[3]);
+        int h4 = HashUtil::MurmurHash32(ele ^ a[4]);
+        int h5 = HashUtil::MurmurHash32(ele ^ a[5]);
+        int h6 = HashUtil::MurmurHash32(ele ^ a[6]);
+        int h7 = HashUtil::MurmurHash32(ele ^ a[7]);
+        int h8 = HashUtil::MurmurHash32(ele ^ a[8]);
 
         set_item(this->position_hash(h1));
         set_item(this->position_hash(h2));
         set_item(this->position_hash(h3));
         set_item(this->position_hash(h4));
         set_item(this->position_hash(h5));
+        set_item(this->position_hash(h6));
+        set_item(this->position_hash(h7));
+        set_item(this->position_hash(h8));
         return 0;
     }
     bool lookup(int ele)
     {
-        int h1 = HashUtil::MurmurHash32(ele);
-        int h2 = HashUtil::MurmurHash32(h1);
-        int h3 = HashUtil::MurmurHash32(h2);
-        int h4 = HashUtil::MurmurHash32(h3);
-        int h5 = HashUtil::MurmurHash32(h4);
-        
-        return get_item(this->position_hash(h1)) && get_item(this->position_hash(h2)) && get_item(this->position_hash(h3)) && get_item(this->position_hash(h4)) && get_item(this -> position_hash(h5));
+        int h1 = HashUtil::MurmurHash32(ele ^ a[1]);
+        int h2 = HashUtil::MurmurHash32(ele ^ a[2]);
+        int h3 = HashUtil::MurmurHash32(ele ^ a[3]);
+        int h4 = HashUtil::MurmurHash32(ele ^ a[4]);
+        int h5 = HashUtil::MurmurHash32(ele ^ a[5]);
+        int h6 = HashUtil::MurmurHash32(ele ^ a[6]);
+        int h7 = HashUtil::MurmurHash32(ele ^ a[7]);
+        int h8 = HashUtil::MurmurHash32(ele ^ a[8]);
+
+        return get_item(this->position_hash(h1)) && get_item(this->position_hash(h2)) && get_item(this->position_hash(h3)) && get_item(this->position_hash(h4)) && get_item(this -> position_hash(h5)) && get_item(this->position_hash(h6)) && get_item(this->position_hash(h7)) && get_item(this->position_hash(h8));
     }
     double get_load_factor(){return 0;}
     double get_full_bucket_factor(){return 0;}
@@ -425,6 +451,7 @@ template <typename fp_t, int fp_len>
 void SemiSortCuckooFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 {
     _n += _n & 1;
+    _n = ROUNDUP(_n, 8192);
     this -> n = _n;
     this -> m = _m;
     this -> max_kick_steps = _step;
@@ -944,7 +971,7 @@ class MortonFilter : public Filter<fp_t, fp_len>
 	void clear();
     int insert(int ele);
     bool lookup(int ele);
-    bool del(int ele) {}
+    bool del(int ele) {return 0;}
     double get_load_factor();
 
     uint8_t *T;
@@ -975,6 +1002,7 @@ class MortonFilter : public Filter<fp_t, fp_len>
 template <typename fp_t, int fp_len>
 void MortonFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 {
+    _n += _n & 1;
     this -> n = _n;
     this -> m = _m;
     this -> max_kick_steps = _step;
@@ -999,7 +1027,7 @@ void MortonFilter<fp_t, fp_len>::init(int _n, int _m, int _step)
 
     max_2_power = 1;
 
-    for (; max_2_power * 2 < _n; ) max_2_power <<= 1;
+    for (; max_2_power * 2 < this -> n; ) max_2_power <<= 1;
 }
 
 template <typename fp_t, int fp_len>
@@ -1065,13 +1093,14 @@ void MortonFilter<fp_t, fp_len>::get_bucket(int pos, fp_t *store)
 
     int cur_bucket_count = get_count(block, index);
 
-    for (int i = 0; i < 4; i++) store[i] = 0;
+    for (int i = 0; i < 5; i++) store[i] = 0;
     for (int i = 0; i < cur_bucket_count; i++)
         store[i] = T[base_byte + offset_index + i];
 
     for (int i = index; i < 64; i++) offset_index += get_count(block, i);
 
     store[3] = offset_index; // store block load
+    for (int i = 0; i < 3; i++) store[4] += store[i] != 0; // bucket load
 }
 
 
@@ -1164,27 +1193,34 @@ int MortonFilter<fp_t, fp_len>::insert_to_bucket(fp_t *store, fp_t fp)
 template <typename fp_t, int fp_len>
 void MortonFilter<fp_t, fp_len>::block_kick_one(int pos, int &alt, fp_t &fp)
 {
-    //printf("ready to kick one\n");
-    //print_block(pos);
+    /*
+    printf("ready to kick one\n");
+    print_block(pos);
+    */
     int block = pos / 64;
-    int tmp = 0;
-    for (int i = 63; i >= 0; i--)
+    int item_pos = (rand() % 46);
+    int cnt = 0;
+    int index = 0;
+    for (int i = 0; i < 64; i++)
     {
-        if (get_count(block, i) > 0)
+        int t = get_count(block, i);
+        if (cnt + t > item_pos)
         {
-            tmp = i;
+            index = i;
             break;
         }
+        cnt += t;
     }
-    int old_count = get_count(block, tmp);
-    set_count(block, tmp, old_count - 1);
 
-    fp = T[block * 512 / 8 + 45];
+    int old_count = get_count(block, index);
+    set_count(block, index, old_count - 1);
+
+    fp = T[block * 512 / 8 + item_pos];
+    for (int i = item_pos; i < 45; i++)
+        T[block * 512 / 8 + i] = T[block * 512 / 8 + i + 1];
+
     T[block * 512 / 8 + 45] = 0;
-    alt = tmp + block * 64;
-
-    //printf("\nkicked\n");
-    //print_block(pos);
+    alt = index + block * 64;
 }
 template <typename fp_t, int fp_len>
 int MortonFilter<fp_t, fp_len>::insert(int ele)
@@ -1240,6 +1276,10 @@ int MortonFilter<fp_t, fp_len>::insert(int ele)
         // this block is full ! kick another item in this block
         int kick_pos = 0;
         fp_t kick_item = 0;
+        /*
+        double sb = this -> get_load_factor();
+        deln(sb);
+        */
         block_kick_one(cur, kick_pos, kick_item);
 
         cur_store[0] = fp;
@@ -1256,9 +1296,14 @@ int MortonFilter<fp_t, fp_len>::insert(int ele)
     }
 
     int alt = alternate(cur, tmp_fp);
+    int block_full = 0;
+    int normal_kick = 0;
+    vector<int> path;
+    path.push_back(cur);
     
     for (int i = 0; i < this -> max_kick_steps; i++)
     {
+        path.push_back(alt);
         memset(store1, 0, sizeof(store1));
         get_bucket(alt, store1);
         if (insert_to_bucket(store1, tmp_fp) == 0) 
@@ -1268,22 +1313,40 @@ int MortonFilter<fp_t, fp_len>::insert(int ele)
             return 0;
         }
 
-        fp = store1[0];
-        if (fp == 0)
+        if (store1[4] < 3)
         {
+            if (store1[3] != 46)
+            {
+                deln(store1[4]);
+                deln(store1[3]);
+            }
+            assert(store1[3] == 46);
+            block_full++;
             // this block is full ! kick another item in this block
             int kick_pos = 0;
             fp_t kick_item = 0;
             block_kick_one(alt, kick_pos, kick_item);
 
-            store1[0] = tmp_fp;
+            get_bucket(alt, store1);
+            bool ok = false;
+            for (int i = 0; i < 3; i++)
+                if (store1[i] == 0)
+                {
+                    store1[i] = tmp_fp;
+                    ok = true;
+                    break;
+                }
+            assert(ok);
             set_bucket(alt, store1);
 
             alt = kick_pos;
             fp = kick_item;
         } else
         {
-            store1[0] = tmp_fp;
+            int t = rand() % 3;
+            fp = store1[t];
+            normal_kick++;
+            store1[t] = tmp_fp;
             set_bucket(alt, store1);
         }
 
@@ -1291,6 +1354,17 @@ int MortonFilter<fp_t, fp_len>::insert(int ele)
         tmp_fp = fp;
         alt = alternate(alt, tmp_fp);
     }
+
+    /*
+    for (int i = 0; i < this -> n; i += 64)
+        print_block(i);
+
+    for (int i = 0; i < path.size(); i++)
+        printf("%d ", path[i]);
+    */
+    //puts("");
+    deln(block_full);
+    deln(normal_kick);
 
     return 1;
 }
@@ -1523,50 +1597,32 @@ template <typename fp_t, int fp_len>
 class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
 {
     private : 
-    int alternate(int pos, fp_t fp) // get alternate position
+    virtual int alternate(int pos, fp_t fp) // get alternate position
     {
+        const static int len[4] = {4096, 64, 64, 64};
+
         int n = this -> n;
+        int fp_hash = fp * 0x5bd1e995;
 
-        int fp_hash = HashUtil::MurmurHash32(fp);
+        //int bias = fp_hash & (this -> max_2_power - 1);
+        int bias = fp_hash & 2047;
 
-        //delta : the xor number
-        //int delta = this->position_hash(fp_hash);
-        int delta = fp_hash & (this -> max_2_power - 1);
+        //int segment_length = 64;
+        //if ((fp & 3) == 0) segment_length = 2048;
+        int segment_length = len[fp & 3];
 
-        //bias : the rotation bias
-        //int bias = this -> position_hash(HashUtil::MurmurHash32(fp_hash)) | 1;
-        //int bias = (HashUtil::MurmurHash32(fp_hash) & (this -> max_2_power - 1)) | 1;
-        //int bias = (delta & (this -> max_2_power - 1)) | 1;
-        int bias = delta;
-
-        pos = pos + bias;
-        if (pos >= this -> n) pos -= this -> n;
-        
-        // find the corresponding segment of 'pos'
-        // 1. pos ^ n 
-        // ----- the highest different bit between position and n will be set to 1
-        //
-        // 2. find the highest bit 
-        // ----- get the segment number
-        //
-        // 3. curlen = 1 << highest_bit
-        // ----- get the segment length
-        int segment_length = 1 << find_highest_bit(pos ^ n);
-
-        // get the alternate position
-        // 1. delta & (segment_length - 1)
-        // ----- equals to delta % segment_length
-        // 2. pos ^ ...
-        // ----- xor (delta % segment_length)
-        int t = (delta & (segment_length - 1));
+        int t = (fp_hash & (segment_length - 1));
         if (t == 0) t = 1;
 
+        pos = pos + bias;
+        if (pos >= n) pos -= n;
+        
+        //int segment_length = 1 << find_highest_bit(pos ^ n);
+        //int segment_length = lower_power_of_two((pos ^ n));
         int ret = pos ^ t;
 
-        // minus bias to avoid aggregation
-
         ret = ret - bias;
-        if (ret < 0) ret += this -> n;
+        if (ret < 0) ret += n;
         
         return ret;
     }
@@ -1591,7 +1647,6 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         int cur1 = this -> position_hash(ele);
         int cur2 = alternate(cur1, fp);
 
-        /*
         if (alternate(cur2, fp) != cur1)
         {
             deln(ele);
@@ -1599,7 +1654,6 @@ class VacuumFilter : public SemiSortCuckooFilter<fp_t, fp_len>
             printf("cur1 = %d alt cur1 = %d\n", cur1, alternate(cur1, fp));
             printf("cur2 = %d alt cur2 = %d\n", cur2, alternate(cur2, fp));
         }
-        */
 
         fp_t store1[8];
         fp_t store2[8];
@@ -2114,5 +2168,50 @@ class AddSubFilter : public SemiSortCuckooFilter<fp_t, fp_len>
         return ret;
     }
 };
+
+template <typename fp_t, int fp_len>
+class VacuumFilterTest : public VacuumFilter<fp_t, fp_len>
+{
+    private : 
+
+    int len[4];
+
+    int alternate(int pos, fp_t fp) // get alternate position
+    {
+
+        int n = this -> n;
+        int fp_hash = fp * 0x5bd1e995;
+
+        //int bias = fp_hash & (this -> max_2_power - 1);
+        int bias = fp_hash & 2047;
+
+        //int segment_length = 64;
+        //if ((fp & 3) == 0) segment_length = 2048;
+        int segment_length = len[fp & 3];
+
+        int t = (fp_hash & (segment_length - 1));
+        if (t == 0) t = 1;
+
+        pos = pos + bias;
+        if (pos >= n) pos -= n;
+        
+        //int segment_length = 1 << find_highest_bit(pos ^ n);
+        //int segment_length = lower_power_of_two((pos ^ n));
+        int ret = pos ^ t;
+
+        ret = ret - bias;
+        if (ret < 0) ret += n;
+        
+        return ret;
+    }
+
+    public :
+    void set_alt_len(int x)
+    {
+        len[0] = x;
+        len[1] = len[2] = len[3] = 64;
+    }
+}; 
+
 
 #endif
